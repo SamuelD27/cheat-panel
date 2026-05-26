@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Database>
+	<EnglishText>
+		<Row Tag="LOC_LCP_NAME">
+			<Text>Local Cheat Panel</Text>
+		</Row>
+		<Row Tag="LOC_LCP_DESCRIPTION">
+			<Text>A private solo-play sandbox and cheat panel for Civilization VII. Adds a gold-skull button to the sub-system dock and an F8 hotkey that opens one-click cheats for gold, influence, research, civics, units, cities, and more.</Text>
+		</Row>
+		<Row Tag="LOC_LCP_OPEN_PANEL">
+			<Text>Open Local Cheat Panel</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_PANEL_HEADER">
+			<Text>Local Cheat Panel</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_1">
+			<Text>[icon:YIELD_GOLD] +10,000</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_2">
+			<Text>[icon:YIELD_GOLD] +100,000</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_3">
+			<Text>[icon:YIELD_GOLD] +1,000,000</Text>
+		</Row>
+	</EnglishText>
+</Database>

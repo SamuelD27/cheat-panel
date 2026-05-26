@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Database>
+    <InputActions>
+        <Row ActionId="lcp-open-panel" DeviceType="Keyboard" Name="LOC_LCP_CHEAT_PANEL_OPEN_PANEL" Description="LOC_LCP_CHEAT_PANEL_OPEN_PANEL" />
+    </InputActions>
+    <InputActionDefaultGestures>
+        <Row ActionId="lcp-open-panel" Index="0" GestureType="KBMouse" GestureData="KEY_F8" />
+    </InputActionDefaultGestures>
+</Database>

@@ -1,0 +1,11 @@
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+.vscode/
+
+# Build/sourcemap artifacts (none committed)
+*.js.map
+
+# The deploy target is a junction in %LOCALAPPDATA%, never inside the repo.

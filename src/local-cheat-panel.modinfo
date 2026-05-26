@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Mod id="local-cheat-panel" version="1" xmlns="ModInfo">
+	<Properties>
+		<Name>LOC_LCP_NAME</Name>
+		<Description>LOC_LCP_DESCRIPTION</Description>
+		<Authors>Local</Authors>
+		<Package>Mod</Package>
+		<AffectsSavedGames>0</AffectsSavedGames>
+		<EnabledByDefault>1</EnabledByDefault>
+		<!-- Private solo-play cheat/sandbox panel. Forked (privately, not for redistribution) from the
+		     Sovereign Cheat Panel, which is proven working on Civ VII build 23245653 / Update 1.4.0
+		     "Test of Time". M0 = faithful rebranded fork. New features (per-row unit/city lists, map
+		     paint, infinite-move toggle, duplication) are added in later milestones. -->
+	</Properties>
+	<Dependencies>
+		<Mod id="base-standard" title="LOC_MODULE_BASE_STANDARD_NAME" />
+	</Dependencies>
+	<ActionCriteria>
+		<Criteria id="always">
+			<AlwaysMet></AlwaysMet>
+		</Criteria>
+	</ActionCriteria>
+	<ActionGroups>
+		<ActionGroup id="shell-local-cheat-panel" scope="shell" criteria="always">
+			<Actions>
+				<UpdateDatabase>
+					<Item>database/input.xml</Item>
+				</UpdateDatabase>
+			</Actions>
+		</ActionGroup>
+		<ActionGroup id="game-local-cheat-panel" scope="game" criteria="always">
+			<Actions>
+				<UpdateText>
+					<Item>text/Cheat-Panel-Text.sql</Item>
+				</UpdateText>
+				<UIScripts>
+					<Item>ui/sub-system-dock/lcp-sub-system-dock.js</Item>
+					<Item>ui/cheat-panel/cheat-panel.js</Item>
+				</UIScripts>
+				<ImportFiles>
+					<Item>ui/cheat-panel/cheat-panel.html</Item>
+				</ImportFiles>
+			</Actions>
+		</ActionGroup>
+	</ActionGroups>
+	<LocalizedText>
+		<File>text/en_us/ModuleText.xml</File>
+	</LocalizedText>
+</Mod>

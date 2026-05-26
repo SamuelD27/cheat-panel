@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Program Files \\(x86\\)\\\\Steam\\\\steamapps\\\\common\\\\Sid Meier's Civilization VII\\\\Base\\\\modules\" -Directory | ForEach-Object { $_.Name })",
+      "PowerShell(git init)",
+      "PowerShell(git config user.email \"samsamd2704@gmail.com\")",
+      "PowerShell(git config user.name \"Shadow\")",
+      "PowerShell(git add -A)"
+    ]
+  }
+}
