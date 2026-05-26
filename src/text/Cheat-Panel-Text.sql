@@ -30,6 +30,8 @@
 			('LOC_LCP_CHEAT_BTN_GIVE_EXP',			'en_US',	"Give Experience"),
 			('LOC_LCP_CHEAT_BTN_RESTORE_MOVE_ALL',	'en_US',	"[icon:UNIT_MOVEMENT_ICON] Restore Movement (All Units)"),
 			('LOC_LCP_CHEAT_BTN_HEAL_ALL',			'en_US',	"Heal All My Units"),
+			('LOC_LCP_CHEAT_SECTION_UNIT_LIST',		'en_US',	"── All Units ──"),
+			('LOC_LCP_CHEAT_BTN_REFRESH',			'en_US',	"Refresh"),
 
 			-- Cities tab
 			('LOC_LCP_CHEAT_BTN_COMPLETE_PROD_SEL',	'en_US',	"[icon:YIELD_PRODUCTION] Complete Production (Selected)"),

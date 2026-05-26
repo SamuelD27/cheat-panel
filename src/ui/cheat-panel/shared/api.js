@@ -68,6 +68,24 @@ export function restoreMovement(unitId) { if (!guardSP()) return; Units.restoreM
 export function healUnit(unitId)        { if (!guardSP()) return; Units.setDamage(unitId, 0); }
 export function giveExperience(unitId, amount) { if (!guardSP()) return; Units.changeExperience(unitId, amount); }
 
+// ─── UNIT display helpers (reads only; safe in any mode) ──────────────
+/** Snapshot of a unit's display fields, fully defensive against missing components. */
+export function unitDisplay(u) {
+    let name = '(unit)';
+    try { name = Locale.compose(u.name); } catch (e) { /* keep fallback */ }
+    let hasHp = false, hp = 0, maxHp = 0, hasMp = false, mp = 0, maxMp = 0, x = -1, y = -1;
+    try { const h = u.Health; if (h && h.maxDamage > 0) { hasHp = true; maxHp = h.maxDamage; hp = h.maxDamage - h.damage; } } catch (e) {}
+    try { const m = u.Movement; if (m) { hasMp = true; mp = m.movementMovesRemaining; maxMp = m.maxMoves; } } catch (e) {}
+    try { const loc = u.location; if (loc) { x = loc.x; y = loc.y; } } catch (e) {}
+    return { name, hasHp, hp, maxHp, hasMp, mp, maxMp, x, y };
+}
+
+/** Center the camera on a unit's plot. */
+export function lookAtUnit(u) {
+    try { if (u.location && typeof Camera !== 'undefined') Camera.lookAtPlot(u.location, { zoom: 0.35 }); }
+    catch (e) { ERR('lookAtUnit failed:', e); }
+}
+
 /** Refresh the on-screen movement-point indicator after a movement restore (known cosmetic bug). */
 export function refreshUnitSelection(unitId) {
     try { UI.Player.deselectAllUnits(); UI.Player.selectUnit(unitId); } catch (e) { ERR('reselect failed:', e); }

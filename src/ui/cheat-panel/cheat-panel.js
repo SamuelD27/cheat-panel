@@ -11,6 +11,7 @@
  */
 import { Panel, FocusManager, DialogBoxManager, DialogBoxAction } from '/base-standard/ui/cheat-panel/shared/imports.js';
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
+import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
 
 const InputEngineEventName = 'engine-input';
 
@@ -109,6 +110,25 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-left:hover::before { border-right-color: #ffe9a8; }
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #ffe9a8; }
             .cheat-frame fxs-header { cursor: grab; }
+            .cheat-frame .cheat-unit-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
+            .cheat-frame .lcp-list-empty { color: #b8a87a; text-align: center; padding: 0.5rem; font-size: 0.8rem; }
+            .cheat-frame .lcp-row {
+                display: flex; flex-direction: column;
+                padding: 0.25rem 0.4rem; margin: 0.15rem 0;
+                background: rgba(20,16,6,0.5);
+                border: 1px solid rgba(180,150,70,0.25); border-radius: 0.25rem;
+            }
+            .cheat-frame .lcp-row-label { color: #e8d9a8; font-size: 0.8rem; cursor: pointer; margin-bottom: 0.2rem; }
+            .cheat-frame .lcp-row-label:hover { color: #fff0c0; }
+            .cheat-frame .lcp-row-btns { display: flex; flex-direction: row; }
+            .cheat-frame .lcp-row-btn {
+                flex: 1 1 auto; margin-right: 0.25rem;
+                padding: 0.15rem 0.3rem; font-size: 0.75rem;
+                color: #1a1206; background: linear-gradient(#e8c860,#bf9a3a);
+                border: 1px solid #6b561c; border-radius: 0.2rem; cursor: pointer;
+            }
+            .cheat-frame .lcp-row-btn:hover { background: linear-gradient(#ffe9a8,#e8c860); }
+            .cheat-frame .lcp-row-btn:last-child { margin-right: 0; }
         `;
         document.head.appendChild(style);
     }
@@ -193,6 +213,11 @@ class ScreenCheatPanel extends Panel {
         const tabBar = this.Root.querySelector(".cheat-tab-bar");
         if (tabBar) tabBar.addEventListener("tab-selected", this.tabSelectedListener);
 
+        this.unitListEl = this.Root.querySelector(".cheat-unit-list");
+        const refreshUnitsBtn = this.Root.querySelector(".cheat-refresh-units");
+        if (refreshUnitsBtn) refreshUnitsBtn.addEventListener("action-activate", () => this.refreshUnitList());
+        this.refreshUnitList();
+
         this.setupDragging();
 
         FocusManager.get().setFocus(this.Root);
@@ -221,6 +246,11 @@ class ScreenCheatPanel extends Panel {
         this.Root.querySelectorAll(".cheat-tab").forEach(t => {
             t.classList.toggle("hidden", !t.classList.contains(`cheat-tab-${id}`));
         });
+        if (id === 'units') this.refreshUnitList();
+    }
+
+    refreshUnitList() {
+        if (this.unitListEl) renderUnitList(this.unitListEl, () => this.getAmount("exp", this.expAmounts));
     }
 
     // ─── UI helpers ───────────────────────────────────────────────────
