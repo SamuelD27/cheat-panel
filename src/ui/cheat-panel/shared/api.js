@@ -86,6 +86,44 @@ export function lookAtUnit(u) {
     catch (e) { ERR('lookAtUnit failed:', e); }
 }
 
+/** Delete (disband) a unit. Uses the normal gameplay command — no debug mode required. */
+export function deleteUnit(unitId) {
+    if (!guardSP()) return;
+    try {
+        Game.UnitCommands.sendRequest(unitId, "UNITCOMMAND_DISBAND", {});
+        LOG('disbanded unit', unitId?.id);
+    } catch (e) { ERR('deleteUnit failed:', e); }
+}
+
+/**
+ * Duplicate a unit: spawn a plain copy of the same unit type. Validate:true makes the engine place
+ * it on an available adjacent tile when the source plot is occupied. No promotions or XP are copied.
+ * Returns the clone's ComponentID or null.
+ */
+export function duplicateUnit(unit) {
+    if (!guardSP()) return null;
+    try {
+        const owner = unit?.id?.owner ?? GameContext.localPlayerID;
+        const type = unit?.type;
+        const loc = unit?.location;
+        if (type == null || !loc) { ERR('duplicateUnit: missing type/location'); return null; }
+        const result = Units.create(owner, { Type: type, Location: loc, Validate: true });
+        if (result && result.Success && result.ID) {
+            LOG('duplicated unit; clone id', result.ID?.id);
+            return result.ID;
+        }
+        ERR('duplicateUnit: Units.create did not succeed:', result);
+    } catch (e) { ERR('duplicateUnit failed:', e); }
+    return null;
+}
+
+/** Duplicate the currently selected unit (the one the player clicked in-game). */
+export function duplicateSelectedUnit() {
+    const u = getSelectedUnit();
+    if (!u) { ERR('no unit selected to duplicate'); return null; }
+    return duplicateUnit(u);
+}
+
 /** Refresh the on-screen movement-point indicator after a movement restore (known cosmetic bug). */
 export function refreshUnitSelection(unitId) {
     try { UI.Player.deselectAllUnits(); UI.Player.selectUnit(unitId); } catch (e) { ERR('reselect failed:', e); }

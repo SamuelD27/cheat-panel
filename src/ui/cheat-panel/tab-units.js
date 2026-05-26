@@ -2,22 +2,28 @@
  * @file tab-units.js
  * @description Units tab — per-row list of the local player's units.
  *
- * Renders a plain scrollable list (this build has no `fxs-list` element — 0 refs in base UI) of
- * rows, each: "<name> · HP h/m · MP r/x · (x,y)" plus per-row [Heal] [+XP] [Move] buttons. Clicking
- * the label centers the camera on the unit. All engine access goes through ./shared/api.js
- * (single-player-guarded). Rebuilt whenever the Units tab is shown or "Refresh" is clicked.
- *
- * M2 = verified subset (heal / +XP / restore movement). Delete / promote / infinite-move arrive in M3.
+ * Plain scrollable list (this build has no `fxs-list` element). Each unit row shows
+ * "<name> · HP h/m · MP r/x · (x,y)" (clicking the label centers the camera) plus one button row:
+ *   [Heal] [+XP] [Move] [Del]
+ * Infinite-movement (global toggle) and Duplicate (selected unit) live in the tab's top controls,
+ * not per-row — see cheat-panel.js. All engine access goes through ./shared/api.js (SP-guarded).
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
 /**
  * (Re)build the unit list inside `container`.
  * @param {HTMLElement} container  the .cheat-unit-list element
- * @param {() => number} expAmountFn  returns the current +XP stepper amount
+ * @param {object} opts
+ * @param {() => number} opts.expAmount  current +XP stepper amount
+ * @param {(locKey: string, action: () => void) => void} opts.confirm  confirm-dialog helper
+ * @param {() => void} opts.refresh  rebuild the list (after remove)
  */
-export function renderUnitList(container, expAmountFn) {
+export function renderUnitList(container, opts = {}) {
     if (!container) return;
+    const expAmount = opts.expAmount || (() => 50);
+    const confirm = opts.confirm || ((k, fn) => fn());
+    const refresh = opts.refresh || (() => {});
+
     container.innerHTML = '';
 
     let units = [];
@@ -48,18 +54,20 @@ export function renderUnitList(container, expAmountFn) {
         label.addEventListener('click', () => api.lookAtUnit(unit));
         row.appendChild(label);
 
-        const btns = document.createElement('div');
-        btns.className = 'lcp-row-btns';
-        const mkBtn = (text, fn) => {
+        const mkBtn = (text, fn, extraClass) => {
             const b = document.createElement('button');
-            b.className = 'lcp-row-btn';
+            b.className = 'lcp-row-btn' + (extraClass ? ' ' + extraClass : '');
             b.textContent = text;
-            b.addEventListener('click', () => { try { fn(); } catch (e) { api.ERR('row action failed:', e); } paint(); });
+            b.addEventListener('click', () => { try { fn(); } catch (e) { api.ERR('row action failed:', e); } });
             return b;
         };
-        btns.appendChild(mkBtn('Heal', () => api.healUnit(unit.id)));
-        btns.appendChild(mkBtn('+XP', () => api.giveExperience(unit.id, expAmountFn ? expAmountFn() : 50)));
-        btns.appendChild(mkBtn('Move', () => api.restoreMovement(unit.id)));
+
+        const btns = document.createElement('div');
+        btns.className = 'lcp-row-btns';
+        btns.appendChild(mkBtn('Heal', () => { api.healUnit(unit.id); paint(); }));
+        btns.appendChild(mkBtn('+XP', () => { api.giveExperience(unit.id, expAmount()); paint(); }));
+        btns.appendChild(mkBtn('Move', () => { api.restoreMovement(unit.id); paint(); }));
+        btns.appendChild(mkBtn('Del', () => confirm('LOC_LCP_CHEAT_CONFIRM_DELETE_UNIT', () => { api.deleteUnit(unit.id); refresh(); }), 'lcp-row-btn-danger'));
         row.appendChild(btns);
 
         container.appendChild(row);

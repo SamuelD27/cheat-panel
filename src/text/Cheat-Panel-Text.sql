@@ -28,10 +28,12 @@
 			('LOC_LCP_CHEAT_BTN_RESTORE_MOVE_SEL',	'en_US',	"[icon:UNIT_MOVEMENT_ICON] Restore Movement (Selected)"),
 			('LOC_LCP_CHEAT_BTN_HEAL_SEL',			'en_US',	"Heal Selected Unit"),
 			('LOC_LCP_CHEAT_BTN_GIVE_EXP',			'en_US',	"Give Experience"),
+			('LOC_LCP_CHEAT_BTN_DUP_SEL',			'en_US',	"Duplicate Selected Unit"),
 			('LOC_LCP_CHEAT_BTN_RESTORE_MOVE_ALL',	'en_US',	"[icon:UNIT_MOVEMENT_ICON] Restore Movement (All Units)"),
 			('LOC_LCP_CHEAT_BTN_HEAL_ALL',			'en_US',	"Heal All My Units"),
 			('LOC_LCP_CHEAT_SECTION_UNIT_LIST',		'en_US',	"── All Units ──"),
 			('LOC_LCP_CHEAT_BTN_REFRESH',			'en_US',	"Refresh"),
+			('LOC_LCP_CHEAT_CONFIRM_DELETE_UNIT',	'en_US',	"Delete (disband) this unit? This cannot be undone."),
 
 			-- Cities tab
 			('LOC_LCP_CHEAT_BTN_COMPLETE_PROD_SEL',	'en_US',	"[icon:YIELD_PRODUCTION] Complete Production (Selected)"),

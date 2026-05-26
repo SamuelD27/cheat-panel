@@ -12,6 +12,7 @@
 import { Panel, FocusManager, DialogBoxManager, DialogBoxAction } from '/base-standard/ui/cheat-panel/shared/imports.js';
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
+import { ensureListeners, isGlobalInfinite, toggleGlobalInfinite } from '/base-standard/ui/cheat-panel/shared/infinite-move.js';
 
 const InputEngineEventName = 'engine-input';
 
@@ -39,6 +40,7 @@ class ScreenCheatPanel extends Panel {
             { selector: ".cheat-restore-move-sel", action: () => api.restoreMovementSelected() },
             { selector: ".cheat-heal-sel",         action: () => api.healSelectedUnit() },
             { selector: ".cheat-give-exp",         action: () => api.giveExperienceSelected(this.getAmount("exp", this.expAmounts)) },
+            { selector: ".cheat-dup-sel",          action: () => { api.duplicateSelectedUnit(); this.refreshUnitList(); } },
             { selector: ".cheat-restore-move-all", action: () => this.confirmAndRun("LOC_LCP_CHEAT_CONFIRM_MOVE_ALL", () => api.restoreMovementAll()) },
             { selector: ".cheat-heal-all",         action: () => this.confirmAndRun("LOC_LCP_CHEAT_CONFIRM_HEAL_ALL", () => api.healAllUnits()) },
 
@@ -65,6 +67,7 @@ class ScreenCheatPanel extends Panel {
         this.enableOpenSound = true;
         this.enableCloseSound = true;
         this.injectPanelStyles();
+        ensureListeners(); // belt-and-suspenders; infinite-move listeners also register at module load
     }
 
     /**
@@ -129,6 +132,13 @@ class ScreenCheatPanel extends Panel {
             }
             .cheat-frame .lcp-row-btn:hover { background: linear-gradient(#ffe9a8,#e8c860); }
             .cheat-frame .lcp-row-btn:last-child { margin-right: 0; }
+            .cheat-frame .lcp-row-btns + .lcp-row-btns { margin-top: 0.2rem; }
+            .cheat-frame .lcp-row-btn.active { background: linear-gradient(#7fe0a0,#3fae6a); color: #06210f; border-color: #2c7d4e; }
+            .cheat-frame .lcp-row-btn-danger { background: linear-gradient(#e08a7f,#bf4a3a); color: #fff; border-color: #7d2c1c; }
+            .cheat-frame .lcp-row-btn-danger:hover { background: linear-gradient(#ffb0a4,#e0705c); }
+            .cheat-frame .lcp-toggle-btn { width: 100%; padding: 0.35rem; color: #1a1206; background: linear-gradient(#e8c860,#bf9a3a); border: 1px solid #6b561c; border-radius: 0.25rem; cursor: pointer; font-size: 0.85rem; }
+            .cheat-frame .lcp-toggle-btn:hover { background: linear-gradient(#ffe9a8,#e8c860); }
+            .cheat-frame .lcp-toggle-btn.active { background: linear-gradient(#7fe0a0,#3fae6a); color: #06210f; border-color: #2c7d4e; }
         `;
         document.head.appendChild(style);
     }
@@ -218,6 +228,12 @@ class ScreenCheatPanel extends Panel {
         if (refreshUnitsBtn) refreshUnitsBtn.addEventListener("action-activate", () => this.refreshUnitList());
         this.refreshUnitList();
 
+        this.infMoveBtn = this.Root.querySelector(".cheat-inf-move");
+        if (this.infMoveBtn) {
+            this.updateInfMoveBtn();
+            this.infMoveBtn.addEventListener("click", () => { toggleGlobalInfinite(); this.updateInfMoveBtn(); });
+        }
+
         this.setupDragging();
 
         FocusManager.get().setFocus(this.Root);
@@ -250,7 +266,19 @@ class ScreenCheatPanel extends Panel {
     }
 
     refreshUnitList() {
-        if (this.unitListEl) renderUnitList(this.unitListEl, () => this.getAmount("exp", this.expAmounts));
+        if (!this.unitListEl) return;
+        renderUnitList(this.unitListEl, {
+            expAmount: () => this.getAmount("exp", this.expAmounts),
+            confirm: (key, fn) => this.confirmAndRun(key, fn),
+            refresh: () => this.refreshUnitList(),
+        });
+    }
+
+    updateInfMoveBtn() {
+        if (!this.infMoveBtn) return;
+        const on = isGlobalInfinite();
+        this.infMoveBtn.textContent = `∞ Infinite Movement (all units): ${on ? 'ON' : 'OFF'}`;
+        this.infMoveBtn.classList.toggle("active", on);
     }
 
     // ─── UI helpers ───────────────────────────────────────────────────
