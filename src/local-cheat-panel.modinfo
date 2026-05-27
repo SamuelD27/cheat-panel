@@ -30,6 +30,13 @@
 		</ActionGroup>
 		<ActionGroup id="game-local-cheat-panel" scope="game" criteria="always">
 			<Actions>
+				<!-- Input actions must ALSO be registered in `game` scope. A `shell`-only
+				     UpdateDatabase builds the front-end input DB but does not reach the in-game
+				     input handler, so the F8 binding never fired during gameplay (the dock button
+				     is a game-scope UIScript, which is why it worked). -->
+				<UpdateDatabase>
+					<Item>database/input.xml</Item>
+				</UpdateDatabase>
 				<UpdateText>
 					<Item>text/Cheat-Panel-Text.sql</Item>
 				</UpdateText>

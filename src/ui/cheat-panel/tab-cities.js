@@ -4,10 +4,11 @@
  *
  * Mirrors tab-units.js (this build has no `fxs-list` element — plain scrollable DOM rows). Each row
  * shows "<name>[ · town] · pop N · (x,y)" (clicking the label centers the camera) plus one button row:
- *   [+Pop] [Prod] [+Gold]
+ *   [+Pop] [Prod]
  *   - +Pop  : add rural population (amount from the tab's pop stepper)
  *   - Prod  : complete the city's current production
- *   - +Gold : add gold to the empire treasury (a player resource — not per-city; convenience button)
+ * (The old per-row [+Gold] was removed — gold is an empire-wide resource already covered by the
+ *  Player tab's Add Gold buttons, so a per-city copy was redundant.)
  * All engine access goes through ./shared/api.js (SP-guarded).
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
@@ -17,13 +18,11 @@ import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
  * @param {HTMLElement} container  the .cheat-city-list element
  * @param {object} opts
  * @param {() => number} opts.popAmount   current +Pop stepper amount
- * @param {() => number} opts.goldAmount  gold added per [+Gold] click
  * @param {() => void} opts.refresh       rebuild the list
  */
 export function renderCityList(container, opts = {}) {
     if (!container) return;
     const popAmount = opts.popAmount || (() => 1);
-    const goldAmount = opts.goldAmount || (() => 1000);
     const refresh = opts.refresh || (() => {});
 
     container.innerHTML = '';
@@ -66,7 +65,6 @@ export function renderCityList(container, opts = {}) {
         btns.className = 'lcp-row-btns';
         btns.appendChild(mkBtn('+Pop', () => { api.addRuralPopulation(city, popAmount()); paint(); }));
         btns.appendChild(mkBtn('Prod', () => { api.completeProduction(city); paint(); }));
-        btns.appendChild(mkBtn('+Gold', () => { api.addGold(goldAmount()); }));
         row.appendChild(btns);
 
         container.appendChild(row);

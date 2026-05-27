@@ -7,6 +7,13 @@
 		<Row Tag="LOC_LCP_DESCRIPTION">
 			<Text>A private solo-play sandbox and cheat panel for Civilization VII. Adds a gold-skull button to the sub-system dock and an F8 hotkey that opens one-click cheats for gold, influence, research, civics, units, cities, and more.</Text>
 		</Row>
+		<!-- Referenced by database/input.xml (the F8 InputAction Name/Description) AND the dock
+		     button tooltip. Defined here in the globally-loaded LocalizedText file so it resolves in
+		     BOTH shell (front-end) and game scope — a game-scope-only definition left the front-end
+		     with a dangling reference. -->
+		<Row Tag="LOC_LCP_CHEAT_PANEL_OPEN_PANEL">
+			<Text>Open Local Cheat Panel</Text>
+		</Row>
 		<Row Tag="LOC_LCP_OPEN_PANEL">
 			<Text>Open Local Cheat Panel</Text>
 		</Row>
