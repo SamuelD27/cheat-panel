@@ -18,7 +18,7 @@ sub-system dock.
 | **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | ✅ **done & verified in-game (2026-05-27)** | `c6f7f98` +`e8a8ea1` +dup-rewrite |
 | **M4** | Cities tab: per-row city list (set pop / complete prod) | ✅ **done & verified in-game (2026-05-27)** | `6521393` |
 | **M4.1** | Fixes: front-end LOC ref, drop redundant per-city +Gold (⚠ its "F8 in-game" attempt was a save-breaking regression — see M4.1-fix) | ⚠ partially reverted | `bdafc56` |
-| **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | 🟡 **fixed & deployed, NOT yet verified** | _uncommitted_ |
+| **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | 🟡 **fixed & deployed, NOT yet verified** | `061ccde` |
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | 🟡 **implemented & deployed, NOT yet verified** | `45e7378` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
