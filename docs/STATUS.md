@@ -16,29 +16,44 @@ sub-system dock.
 | **M1** | Modularize: `shared/imports.js` + `shared/api.js`; `LCP:` logging; single-player guard | ✅ done & tested | `a0a7472` |
 | **M2** | Units tab: per-row unit list (Heal / +XP / Move; click row = camera pan) | ✅ done & tested | `d86c3d6` |
 | **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | ✅ **done & verified in-game (2026-05-27)** | `c6f7f98` +`e8a8ea1` +dup-rewrite |
-| **M4** | Cities tab: per-row city list (set pop / complete prod / +gold) | 🟡 **implemented & deployed, NOT yet verified (user away)** | — |
+| **M4** | Cities tab: per-row city list (set pop / complete prod) | ✅ **done & verified in-game (2026-05-27)** | `6521393` |
+| **M4.1** | Fixes: F8 in-game scope, front-end LOC ref, drop redundant per-city +Gold | ✅ done (needs restart to verify F8/LOC) | `bdafc56` |
+| **M4.2** | Cities tab: free city-territory growth (claim adjacent tiles via native UI) | 🟡 **scoped, pending user direction** (relinquish not engine-supported) | — |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: verify M4 in-game (user was away during the build)
+## ▶ Immediate next action: verify the M4.1 fixes + decide M4.2 scope
 
-**M4 needs a FULL GAME RESTART** (new file `tab-cities.js` registered in the modinfo + a new text
-string), not just Reload UI. Then **F8 → Cities tab**, scroll to the **"── All Cities ──"** list:
-1. Each city shows a row: `<name> · pop N · prod:<item|idle> · (x,y)`. Click the **label** → camera
-   pans to the city.
-2. **[+Pop]** (uses the pop stepper amount at the top of the tab) → city population ticks up in the row.
-3. **[Prod]** → completes the city's current production (the `prod:` field should change / banner shows
-   it finished next tick).
-4. **[+Gold]** → adds 1,000 gold to the treasury (watch the top-bar gold). _(Gold is a player resource;
-   the per-row button is just a convenience — it adds to the empire treasury, not "to that city".)_
-5. **[Refresh]** rebuilds the list.
+**M4 verified in-game 2026-05-27** — per-row +Pop / Prod / camera-pan all work. User feedback drove
+the M4.1 fixes (commit `bdafc56`) and the M4.2 feature request.
 
-⚠ **Risk to watch (the `Units.create` lesson):** `+Pop` and `Prod` call the city's component methods
-directly (`city.addRuralPopulation` / `city.BuildQueue.completeProduction`) — the Sovereign approach,
-and the only path that exists (there is **no** instant-complete CityOperation). If either does nothing
-in-game, the fix is to route it through `Game.CityOperations.sendRequest(cityID, …)` like the base UI's
-build-queue does — see the M3 dup saga below. `+Gold` uses `Treasury.changeGoldBalance` (proven in M0),
-so it should always work; if only gold works, that confirms the direct-method theory.
+**M4.1 needs a FULL GAME RESTART** (modinfo + text changes), not just Reload UI. After restart, confirm:
+1. **F8 opens/closes the panel in-game** (previously only the dock skull button worked — the `input.xml`
+   binding was loaded only in `shell` scope, so it never registered during gameplay; now also in `game`).
+2. **Main-menu button labels render normally** (e.g. "Continue Game", not raw `LOC_MENU_CONTINUE`). We
+   removed a dangling front-end localization reference (`input.xml` referenced
+   `LOC_LCP_CHEAT_PANEL_OPEN_PANEL`, defined only in game-scope SQL; now also in the global
+   `ModuleText.xml`). ⚠ If the raw-key bug still appears on a clean launch, it is most likely the
+   **0x20 launch sharing-violation glitch** (see open issue below), not this mod — try a clean relaunch.
+3. **Cities tab rows now show only [+Pop] [Prod]** (the redundant per-row [+Gold] was removed — gold is
+   empire-wide, already covered by the Player tab's Add Gold buttons).
+
+### M4.2 — free city-territory growth (researched; awaiting user direction)
+User wants to "grow the city as I want": open the classic Grow-City tile picker, claim **adjacent**
+tiles with **no distance limit**, and (ideally) **give up** tiles too.
+- ✅ **CLAIM is doable via the native UI.** `InterfaceMode.switchTo("INTERFACEMODE_ACQUIRE_TILE",
+  {CityID})` is exactly the game's grow-city tile picker. It highlights only valid **adjacent** plots
+  (adjacency is the engine's only rule — no ring/distance cap, matching the request), and committing a
+  plot fires `Game.CityCommands.sendRequest(cityID, CityCommandTypes.EXPAND, {X,Y})`. Valid plots come
+  from `Game.CityCommands.canStart(cityID, EXPAND, {}, false).Plots`. Refs:
+  `base-standard/ui/interface-modes/interface-mode-acquire-tile.js`,
+  `base-standard/ui/place-population/model-place-population.js`.
+- ❌ **RELINQUISH is NOT engine-supported.** No `RELINQUISH`/`RELEASE`/remove-plot CityCommand exists,
+  and there is no `WorldBuilder.CityManager`/plot-owner-set API. Once a city owns a plot it is permanent
+  (until the city is destroyed). The only theoretical "give up" path is destroy + recreate the city —
+  drastic and risky; not recommended.
+- ❓ **Open question for testing:** whether `EXPAND` works freely as a cheat with no pending growth, or
+  must be paired with the existing `+Pop` (which creates a growth/worker slot to place). Resolve in-game.
 
 ### M3 outcome (DONE, verified 2026-05-27) — and the key API lesson
 - ✅ ∞-move toggle (minor caveat: units spawned while ON → `docs/Minor_todos.md` #1).
