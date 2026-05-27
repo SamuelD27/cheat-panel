@@ -79,10 +79,18 @@ tiles with **no distance limit**, and (ideally) **give up** tiles too.
   from `Game.CityCommands.canStart(cityID, EXPAND, {}, false).Plots`. Refs:
   `base-standard/ui/interface-modes/interface-mode-acquire-tile.js`,
   `base-standard/ui/place-population/model-place-population.js`.
-- ❌ **RELINQUISH is NOT engine-supported.** No `RELINQUISH`/`RELEASE`/remove-plot CityCommand exists,
-  and there is no `WorldBuilder.CityManager`/plot-owner-set API. Once a city owns a plot it is permanent
-  (until the city is destroyed). The only theoretical "give up" path is destroy + recreate the city —
-  drastic and risky; not recommended.
+- ✅ **RELINQUISH IS possible after all** (earlier "not supported" conclusion was WRONG). The tuner
+  uses `WorldBuilder.MapPlots.setOwnership(PlayerIds.NO_PLAYER, loc)` to clear a plot's owner
+  (`tuner-input.js:206`). So a "release tile" cheat is feasible at the plot-ownership level.
+- 🎯 **NEW (2026-05-27) — UI-callable claim paths beyond the native limit.** `tuner-input.js` is a `ui/`
+  file (UI isolate), so the calls it makes are UI-callable — unlike `claimPlot` (maps-only, likely
+  inert). Two options for "grow as I want, any distance":
+  - **`city.purchasePlot(loc)`** (`tuner-input.js:300`, CityPanel "PurchasePlot") — claims a plot **for a
+    specific city**. City-attached; ❓ may cost gold and/or still be radius-capped (verify in-game).
+  - **`WorldBuilder.MapPlots.setOwnership(playerID, loc)`** (`:96`) — raw plot ownership at ANY distance,
+    free; ❓ may not attach the plot to a city (verify). `setOwnership(NO_PLAYER, loc)` = release.
+  - Plot input: subclass **`ChoosePlotInterfaceMode`** (`interface-mode-choose-plot.js`) — it wires
+    `WorldInput.setPlotSelectionHandler` and exits cleanly on Esc/right-click. (Also the M5 plot-click base.)
 - ✅ **RESOLVED in-game (2026-05-27):** `EXPAND` does **NOT** work freely — it is gated on a pending
   growth (`city.Growth.isReadyToPlacePopulation`); `canStart(EXPAND).Plots` is empty otherwise. So the
   native picker yields exactly one claim per natural growth. Unlimited claim-anywhere would need
