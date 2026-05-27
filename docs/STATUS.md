@@ -17,26 +17,36 @@ sub-system dock.
 | **M2** | Units tab: per-row unit list (Heal / +XP / Move; click row = camera pan) | ✅ done & tested | `d86c3d6` |
 | **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | ✅ **done & verified in-game (2026-05-27)** | `c6f7f98` +`e8a8ea1` +dup-rewrite |
 | **M4** | Cities tab: per-row city list (set pop / complete prod) | ✅ **done & verified in-game (2026-05-27)** | `6521393` |
-| **M4.1** | Fixes: F8 in-game scope, front-end LOC ref, drop redundant per-city +Gold | ✅ done (needs restart to verify F8/LOC) | `bdafc56` |
+| **M4.1** | Fixes: front-end LOC ref, drop redundant per-city +Gold (⚠ its "F8 in-game" attempt was a save-breaking regression — see M4.1-fix) | ⚠ partially reverted | `bdafc56` |
+| **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | 🟡 **fixed & deployed, NOT yet verified** | _uncommitted_ |
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | 🟡 **implemented & deployed, NOT yet verified** | `45e7378` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: verify the M4.1 fixes + decide M4.2 scope
+## ▶ Immediate next action: RESTART and confirm "Continue Game" loads (M4.1-fix), then verify M4.2
 
-**M4 verified in-game 2026-05-27** — per-row +Pop / Prod / camera-pan all work. User feedback drove
-the M4.1 fixes (commit `bdafc56`) and the M4.2 feature request.
+### 🛑 Regression found & fixed (2026-05-27) — the game couldn't load any save
+**Symptom:** clicking **"Continue Game"** failed — the game bounced back to the main menu instead of
+loading. **Root cause (confirmed in `Modding.log`):** M4.1 (`bdafc56`) registered `database/input.xml`
+as a **game-scope** `<UpdateDatabase>` action to try to make F8 work in-game. But `input.xml` defines
+`InputActions` / `InputActionDefaultGestures` rows, which exist only in the **front-end (shell) input
+database**, not the gameplay database. Loading it in game scope errors
+(`UpdateDatabase - Error Loading XML … 'database/input.xml' … require a rollback`), and the engine then
+does a **complete rollback to vanilla**, so NO save loads while the mod is enabled. **Fix:** removed the
+game-scope `input.xml` registration (kept the working shell-scope one). _Engine lesson:_ input-action
+XML is shell-scope only; a game-scope `<UpdateDatabase>` cannot reach the in-game input tables.
 
-**M4.1 needs a FULL GAME RESTART** (modinfo + text changes), not just Reload UI. After restart, confirm:
-1. **F8 opens/closes the panel in-game** (previously only the dock skull button worked — the `input.xml`
-   binding was loaded only in `shell` scope, so it never registered during gameplay; now also in `game`).
-2. **Main-menu button labels render normally** (e.g. "Continue Game", not raw `LOC_MENU_CONTINUE`). We
-   removed a dangling front-end localization reference (`input.xml` referenced
-   `LOC_LCP_CHEAT_PANEL_OPEN_PANEL`, defined only in game-scope SQL; now also in the global
-   `ModuleText.xml`). ⚠ If the raw-key bug still appears on a clean launch, it is most likely the
-   **0x20 launch sharing-violation glitch** (see open issue below), not this mod — try a clean relaunch.
-3. **Cities tab rows now show only [+Pop] [Prod]** (the redundant per-row [+Gold] was removed — gold is
-   empire-wide, already covered by the Player tab's Add Gold buttons).
+**This fix needs a FULL GAME RESTART** (modinfo change), not just Reload UI. After restart, confirm:
+1. **"Continue Game" actually loads the save** (the regression is gone). This is the gating test.
+2. **Cities tab rows show only [+Pop] [Prod]** (the redundant per-row [+Gold] was removed — gold is
+   empire-wide, already covered by the Player tab's Add Gold buttons; M4.1).
+3. **M4.2 [Grow]:** open a city row's **[Grow]** → panel closes, camera pans to the city, the native
+   tile picker highlights valid **adjacent** plots; clicking one claims it into the city. Check `UI.log`
+   for `LCP: growCity: EXPAND offers N plot(s)` to answer whether EXPAND needs a pending growth slot.
+
+**Re: F8 in-game** — F8 now opens the panel **only at the main menu** (shell scope). In-game, use the
+**dock skull button** (works). A correct in-game F8 needs a JS-level key approach (not a DB action);
+tracked as a follow-up, not bundled into this fix.
 
 ### M4.2 — free city-territory growth (researched; awaiting user direction)
 User wants to "grow the city as I want": open the classic Grow-City tile picker, claim **adjacent**
