@@ -21,7 +21,7 @@ sub-system dock.
 | **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | ✅ **verified 2026-05-27** (save loads again) | `061ccde` |
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
 | **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
-| **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | 🟡 **implemented & deployed (NEW FILE → needs RESTART), NOT yet verified** | _uncommitted_ |
+| **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | 🟡 **implemented & deployed (NEW FILE → needs RESTART), NOT yet verified** | `74adfa2` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
