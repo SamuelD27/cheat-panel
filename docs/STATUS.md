@@ -18,12 +18,13 @@ sub-system dock.
 | **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | ✅ **done & verified in-game (2026-05-27)** | `c6f7f98` +`e8a8ea1` +dup-rewrite |
 | **M4** | Cities tab: per-row city list (set pop / complete prod) | ✅ **done & verified in-game (2026-05-27)** | `6521393` |
 | **M4.1** | Fixes: front-end LOC ref, drop redundant per-city +Gold (⚠ its "F8 in-game" attempt was a save-breaking regression — see M4.1-fix) | ⚠ partially reverted | `bdafc56` |
-| **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | 🟡 **fixed & deployed, NOT yet verified** | `061ccde` |
-| **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | 🟡 **implemented & deployed, NOT yet verified** | `45e7378` |
+| **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | ✅ **verified 2026-05-27** (save loads again) | `061ccde` |
+| **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
+| **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | 🟡 **fixed & deployed (JS-only → Reload UI), NOT yet verified** | _uncommitted_ |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART and confirm "Continue Game" loads (M4.1-fix), then verify M4.2
+## ▶ Immediate next action: Reload UI, verify the M4.2 [Grow] soft-lock guard; decide unlimited-growth direction
 
 ### 🛑 Regression found & fixed (2026-05-27) — the game couldn't load any save
 **Symptom:** clicking **"Continue Game"** failed — the game bounced back to the main menu instead of
@@ -36,17 +37,37 @@ does a **complete rollback to vanilla**, so NO save loads while the mod is enabl
 game-scope `input.xml` registration (kept the working shell-scope one). _Engine lesson:_ input-action
 XML is shell-scope only; a game-scope `<UpdateDatabase>` cannot reach the in-game input tables.
 
-**This fix needs a FULL GAME RESTART** (modinfo change), not just Reload UI. After restart, confirm:
-1. **"Continue Game" actually loads the save** (the regression is gone). This is the gating test.
-2. **Cities tab rows show only [+Pop] [Prod]** (the redundant per-row [+Gold] was removed — gold is
-   empire-wide, already covered by the Player tab's Add Gold buttons; M4.1).
-3. **M4.2 [Grow]:** open a city row's **[Grow]** → panel closes, camera pans to the city, the native
-   tile picker highlights valid **adjacent** plots; clicking one claims it into the city. Check `UI.log`
-   for `LCP: growCity: EXPAND offers N plot(s)` to answer whether EXPAND needs a pending growth slot.
+✅ **Verified 2026-05-27:** "Continue Game" loads the save again — the regression is fixed.
+
+### 🛑 M4.2 soft-lock found & fixed (2026-05-27)
+**Symptom:** [Grow] worked once (claimed a tile), but it was **limited to one tile per natural
+population growth**. Clicking [Grow] again with no pending growth dropped the player into the tile
+picker with **nothing claimable and no obvious way out** (soft-lock).
+**Root cause (confirmed in base source):** the picker's valid plots come from
+`Game.CityCommands.canStart(cityID, EXPAND, {}, false).Plots` (`model-place-population.js:91`), which is
+**empty unless `city.Growth.isReadyToPlacePopulation`** — i.e. EXPAND is **gated on a pending growth**.
+With 0 expand plots the picker still opens for a full city (specialist/worker tiles keep
+`AcquireTileInterfaceMode.initialize()` returning true), so the player is stuck.
+**Fix (JS-only → Reload UI):** `api.growCity()` now checks `cityExpandPlotCount()` first and **only**
+enters `INTERFACEMODE_ACQUIRE_TILE` when ≥1 plot is claimable; otherwise it shows an inline hint and
+does nothing. (Escape an existing soft-lock with **Esc / right-click**, or `~` → UI → **Reload UI**.)
+
+**Test plan (Reload UI — JS-only change):**
+1. City **with** a pending growth → **[Grow]** opens the picker, claim an adjacent tile. (works)
+2. City with **no** pending growth → **[Grow]** shows the yellow hint, does **not** open the picker
+   (no soft-lock). Optionally confirm `UI.log`: `LCP: growCity: EXPAND offers 0 plot(s)`.
+
+### ❓ Decision pending: "grow as I want" (unlimited, player-chosen tiles)
+The native picker is hard-gated on pending growth, so true unlimited growth needs a different path.
+Candidate: **`city.Growth.claimPlot({x,y})`** (`base-standard/maps/map-utilities.js:449`) claims a plot
+with no growth gate — BUT it is only ever called from **map-generation scripts**, never from `ui/`, so
+per the M3 lesson it may be **inert from the panel's UI isolate** (like `Units.create` was). It would
+also need a **custom adjacent-tile picker** (the native one won't populate without growth). This is an
+experimental multi-step feature; awaiting user direction before building it.
 
 **Re: F8 in-game** — F8 now opens the panel **only at the main menu** (shell scope). In-game, use the
 **dock skull button** (works). A correct in-game F8 needs a JS-level key approach (not a DB action);
-tracked as a follow-up, not bundled into this fix.
+tracked as a follow-up.
 
 ### M4.2 — free city-territory growth (researched; awaiting user direction)
 User wants to "grow the city as I want": open the classic Grow-City tile picker, claim **adjacent**
@@ -62,8 +83,11 @@ tiles with **no distance limit**, and (ideally) **give up** tiles too.
   and there is no `WorldBuilder.CityManager`/plot-owner-set API. Once a city owns a plot it is permanent
   (until the city is destroyed). The only theoretical "give up" path is destroy + recreate the city —
   drastic and risky; not recommended.
-- ❓ **Open question for testing:** whether `EXPAND` works freely as a cheat with no pending growth, or
-  must be paired with the existing `+Pop` (which creates a growth/worker slot to place). Resolve in-game.
+- ✅ **RESOLVED in-game (2026-05-27):** `EXPAND` does **NOT** work freely — it is gated on a pending
+  growth (`city.Growth.isReadyToPlacePopulation`); `canStart(EXPAND).Plots` is empty otherwise. So the
+  native picker yields exactly one claim per natural growth. Unlimited claim-anywhere would need
+  `city.Growth.claimPlot` (unverified from the UI isolate) + a custom picker — see the M4.2-fix /
+  "Decision pending" notes above.
 
 ### M3 outcome (DONE, verified 2026-05-27) — and the key API lesson
 - ✅ ∞-move toggle (minor caveat: units spawned while ON → `docs/Minor_todos.md` #1).

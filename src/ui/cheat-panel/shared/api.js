@@ -260,27 +260,44 @@ export function addRuralPopulation(city, amount) { if (!guardSP()) return; for (
 // is NO relinquish/remove-plot counterpart in this build, so growth is claim-only.
 // Refs: base-standard/ui/interface-modes/interface-mode-acquire-tile.js,
 //       base-standard/ui/place-population/model-place-population.js.
-export function growCity(city) {
-    if (!guardSP()) return false;
+// Returns the count of plots the city can claim RIGHT NOW. EXPAND only offers plots while the city
+// has a pending growth to place (city.Growth.isReadyToPlacePopulation); once that growth is spent the
+// engine returns zero. CityCommandTypes may not be an ambient global on every build → fall back to the
+// string. Side-effect-free (canStart with the 4th arg false = no visualization).
+export function cityExpandPlotCount(city) {
     const cityID = city?.id;
-    if (!cityID) { ERR('growCity: no city id'); return false; }
+    if (!cityID) return 0;
     try {
-        // Diagnostic probe: how many adjacent plots does the engine currently offer? This answers the
-        // open question of whether EXPAND is gated on a pending growth/worker slot. Defensive —
-        // CityCommandTypes may not be an ambient global on every build, so fall back to the string.
-        try {
-            const cmd = (typeof CityCommandTypes !== 'undefined') ? CityCommandTypes.EXPAND : 'EXPAND';
-            const res = Game.CityCommands?.canStart?.(cityID, cmd, {}, false);
-            const n = (res && res.Plots) ? res.Plots.length : 0;
-            LOG('growCity: EXPAND offers', n, 'plot(s) for city', cityID.id, '(Success=' + (res ? res.Success : '?') + ')');
-        } catch (e) { ERR('growCity: canStart probe failed:', e); }
+        const cmd = (typeof CityCommandTypes !== 'undefined') ? CityCommandTypes.EXPAND : 'EXPAND';
+        const res = Game.CityCommands?.canStart?.(cityID, cmd, {}, false);
+        return (res && res.Plots) ? res.Plots.length : 0;
+    } catch (e) { ERR('cityExpandPlotCount probe failed:', e); return 0; }
+}
 
-        // Pan to the city first — the player clicked a list row, not the map, so center the picker.
+// Open the native grow-city tile picker for ONE city — but ONLY if it actually has a plot to claim.
+// If there is no pending growth (0 expand plots) we must NOT enter INTERFACEMODE_ACQUIRE_TILE: for a
+// full city the picker still opens (specialist/worker tiles keep it alive) yet nothing is claimable
+// and there is no obvious way out → the player gets soft-locked in the picker. So we gate on the plot
+// count first and only close the panel + switch modes when the claim can succeed.
+// Returns { ok, reason, plots }. opts.closePanel() is invoked only on the success path.
+export function growCity(city, opts = {}) {
+    if (!guardSP()) return { ok: false, reason: 'guard' };
+    const cityID = city?.id;
+    if (!cityID) { ERR('growCity: no city id'); return { ok: false, reason: 'no-id' }; }
+    try {
+        const plots = cityExpandPlotCount(city);
+        LOG('growCity: EXPAND offers', plots, 'plot(s) for city', cityID.id);
+        if (plots === 0) {
+            LOG('growCity: no pending growth to place — not entering the picker (would soft-lock).');
+            return { ok: false, reason: 'no-growth', plots: 0 };
+        }
+        // Ready: leave the panel (so the map is fully clickable), pan to the city, enter the picker.
+        opts.closePanel?.();
         if (city.location && typeof Camera !== 'undefined') Camera.lookAtPlot(city.location, { zoom: 0.4 });
         InterfaceMode.switchTo('INTERFACEMODE_ACQUIRE_TILE', { CityID: cityID });
         LOG('growCity: entered INTERFACEMODE_ACQUIRE_TILE for city', cityID.id);
-        return true;
-    } catch (e) { ERR('growCity failed:', e); return false; }
+        return { ok: true, reason: 'entered', plots };
+    } catch (e) { ERR('growCity failed:', e); return { ok: false, reason: 'error' }; }
 }
 
 export function completeProductionSelected() { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } completeProduction(c); }

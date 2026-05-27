@@ -70,9 +70,30 @@ export function renderCityList(container, opts = {}) {
         btns.className = 'lcp-row-btns';
         btns.appendChild(mkBtn('+Pop', () => { api.addRuralPopulation(city, popAmount()); paint(); }));
         btns.appendChild(mkBtn('Prod', () => { api.completeProduction(city); paint(); }));
-        // Grow: leave the panel (so the map is fully clickable) then enter the native tile picker.
-        btns.appendChild(mkBtn('Grow', () => { closePanel(); api.growCity(city); }));
+
+        // Transient status line for [Grow] (shown when there is no pending growth to place).
+        const growMsg = document.createElement('div');
+        growMsg.className = 'lcp-row-msg';
+        growMsg.style.cssText = 'display:none; font-size:0.85em; line-height:1.3; color:#e6b800; margin-top:3px;';
+        let growMsgTimer = 0;
+        const flashGrowMsg = (text) => {
+            growMsg.textContent = text;
+            growMsg.style.display = 'block';
+            if (growMsgTimer) clearTimeout(growMsgTimer);
+            growMsgTimer = setTimeout(() => { growMsg.style.display = 'none'; }, 7000);
+        };
+
+        // Grow: only enters the native tile picker when the city actually has a plot to claim;
+        // otherwise we'd soft-lock the player in an empty picker. growCity() closes the panel itself
+        // on the success path (so the map is clickable), and reports back when there is no growth.
+        btns.appendChild(mkBtn('Grow', () => {
+            const r = api.growCity(city, { closePanel });
+            if (r && !r.ok && r.reason === 'no-growth') {
+                flashGrowMsg('No pending growth to place — [Grow] only lets you pick a tile once the city has grown. Use [+Pop] to grow it now (the game auto-picks the tile), or wait for natural growth then [Grow] to choose.');
+            }
+        }));
         row.appendChild(btns);
+        row.appendChild(growMsg);
 
         container.appendChild(row);
     }
