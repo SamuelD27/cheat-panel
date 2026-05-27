@@ -15,20 +15,31 @@ sub-system dock.
 | **M0** | Fork Sovereign → `src/`, rebrand, junction deploy, git | ✅ done & tested in-game | `a7b4118` |
 | **M1** | Modularize: `shared/imports.js` + `shared/api.js`; `LCP:` logging; single-player guard | ✅ done & tested | `a0a7472` |
 | **M2** | Units tab: per-row unit list (Heal / +XP / Move; click row = camera pan) | ✅ done & tested | `d86c3d6` |
-| **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | 🟡 **implemented & deployed, NOT yet verified in-game** | `c6f7f98` |
+| **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | 🟡 **1st test found 2 bugs (duplicate, delete) — fixed, re-test pending** | `c6f7f98` (+fixes) |
 | **M4** | Cities tab: per-row city list (set pop / complete prod / +gold) | ⬜ next | — |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: verify M3 in-game
-After fully restarting Civ 7, open **F8 → Units tab** and confirm:
-1. **"∞ Infinite Movement (all units)"** toggle at the top — turn ON (goes green); all units keep
-   moving with no clicks and stay topped-up across a turn; OFF restores normal behavior.
-2. **Duplicate Selected Unit** — click a unit in-game to select it, click the button, a plain copy of
-   the same type appears on an adjacent free tile (no promotions/XP copied).
-   - ⚠️ The one unverified bit: whether `Units.create({Validate:true})` auto-places the clone on an
-     adjacent tile. If it stacks/fails, add explicit adjacent-plot placement.
-3. Per-row **[Heal] [+XP] [Move] [Del]** (Del confirms first).
+## ▶ Immediate next action: RE-verify M3 in-game (after the two fixes below)
+
+**M3 first test (2026-05-27) result:**
+- ✅ ∞-move toggle works (minor caveat → `docs/Minor_todos.md` #1; de-prioritized).
+- ❌ **Duplicate did nothing** → fixed.
+- ❌ **Delete: confirm dialog appeared but CONFIRM did nothing** → fixed.
+
+**Fixes applied (JS-only, in `shared/api.js` — re-test needs only `~` → UI → Reload UI):**
+- `duplicateUnit`: `Units.create`'s `Type` must be a build-unit handle from
+  `player.Units.getBuildUnit(def.UnitType)`, not the raw `unit.type` hash (we were passing the hash).
+  Resolves the hash via `GameInfo.Units.lookup`. Matches base `age-transition-post-load.js`.
+- `deleteUnit`: switched `UNITCOMMAND_DISBAND` → `UNITCOMMAND_DELETE` (the unconditional in-game
+  trash-button command; disband is contextual and its `canStart` rejects silently) and now passes the
+  standard `{X:-9999, Y:-9999, UnitAbilityType:-1}` param block instead of `{}`.
+
+Re-test (F8 → Units tab):
+1. **Duplicate Selected Unit** — select a unit in-game, click the button → a plain copy of the same
+   type appears on an adjacent free tile (no XP/promotions). Confirm placement is adjacent, not stacked.
+2. **Per-row [Del]** — confirm dialog → CONFIRM → unit is removed and the list refreshes.
+3. Quick re-confirm **[Heal] [+XP] [Move]** and the **∞-move toggle** still behave.
 
 Then, on the user's confirmation, proceed to **M4**.
 

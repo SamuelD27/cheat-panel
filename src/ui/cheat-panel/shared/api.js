@@ -86,12 +86,21 @@ export function lookAtUnit(u) {
     catch (e) { ERR('lookAtUnit failed:', e); }
 }
 
-/** Delete (disband) a unit. Uses the normal gameplay command — no debug mode required. */
+/**
+ * Delete a unit. Uses UNITCOMMAND_DELETE — the unconditional in-game "remove unit" (the trash
+ * button). We previously sent UNITCOMMAND_DISBAND, but disband is an ACTIVE_PRIMARY contextual
+ * command whose canStart() can reject silently (sendRequest then no-ops without throwing), which is
+ * why the confirm dialog appeared but nothing happened. Commands also expect the standard parameter
+ * block {X,Y,UnitAbilityType}, not {} (verified in base unit-actions.js processCommand()).
+ */
 export function deleteUnit(unitId) {
     if (!guardSP()) return;
     try {
-        Game.UnitCommands.sendRequest(unitId, "UNITCOMMAND_DISBAND", {});
-        LOG('disbanded unit', unitId?.id);
+        const params = { X: -9999, Y: -9999, UnitAbilityType: -1 };
+        const check = Game.UnitCommands?.canStart?.(unitId, "UNITCOMMAND_DELETE", params, false);
+        if (check && check.Success === false) ERR('deleteUnit: canStart(UNITCOMMAND_DELETE) not allowed:', check);
+        Game.UnitCommands.sendRequest(unitId, "UNITCOMMAND_DELETE", params);
+        LOG('deleted unit', unitId?.id);
     } catch (e) { ERR('deleteUnit failed:', e); }
 }
 
@@ -99,17 +108,24 @@ export function deleteUnit(unitId) {
  * Duplicate a unit: spawn a plain copy of the same unit type. Validate:true makes the engine place
  * it on an available adjacent tile when the source plot is occupied. No promotions or XP are copied.
  * Returns the clone's ComponentID or null.
+ *
+ * Units.create's `Type` is NOT the unit's `.type` hash — it expects a "build unit" handle obtained
+ * via player.Units.getBuildUnit("UNIT_..."). The hash resolves to its UnitType string through
+ * GameInfo.Units.lookup(). (Verified in base age-transition-post-load.js createUnitFromShadow...().)
  */
 export function duplicateUnit(unit) {
     if (!guardSP()) return null;
     try {
         const owner = unit?.id?.owner ?? GameContext.localPlayerID;
-        const type = unit?.type;
         const loc = unit?.location;
-        if (type == null || !loc) { ERR('duplicateUnit: missing type/location'); return null; }
-        const result = Units.create(owner, { Type: type, Location: loc, Validate: true });
+        const def = (unit?.type != null) ? GameInfo.Units.lookup(unit.type) : null;
+        if (!def || !loc) { ERR('duplicateUnit: missing type/location', unit?.type, loc); return null; }
+        const player = Players.get(owner);
+        const buildUnit = player?.Units?.getBuildUnit(def.UnitType);
+        if (buildUnit == null) { ERR('duplicateUnit: getBuildUnit returned null for', def.UnitType); return null; }
+        const result = Units.create(owner, { Type: buildUnit, Location: loc, Validate: true });
         if (result && result.Success && result.ID) {
-            LOG('duplicated unit; clone id', result.ID?.id);
+            LOG('duplicated', def.UnitType, '; clone id', result.ID?.id);
             return result.ID;
         }
         ERR('duplicateUnit: Units.create did not succeed:', result);
