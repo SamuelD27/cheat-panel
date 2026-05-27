@@ -300,6 +300,53 @@ export function growCity(city, opts = {}) {
     } catch (e) { ERR('growCity failed:', e); return { ok: false, reason: 'error' }; }
 }
 
+// ─── FREE TILE CLAIM (M4.3) ───────────────────────────────────────────
+// Diagnostic helper: the ComponentID of the city that owns a plot right now (or null if unowned,
+// undefined if the query is unavailable). GameplayMap.getOwningCityFromXY returns a city ComponentID
+// (see base interface-mode-acquire-tile.js).
+function ownerCityIdAt(loc) {
+    try {
+        if (typeof GameplayMap === 'undefined' || !GameplayMap.getOwningCityFromXY) return undefined;
+        const c = GameplayMap.getOwningCityFromXY(loc.x, loc.y);
+        return c ? c.id : null;
+    } catch (_) { return undefined; }
+}
+
+// Claim an arbitrary plot for a city with NO radius / pending-growth gate, via city.purchasePlot — the
+// same call the in-game tuner's City panel "PurchasePlot" tool makes (base ui/tuner-input/tuner-input.js),
+// so it is callable from this UI isolate (unlike the maps-only Growth.claimPlot, which is likely inert
+// here per the M3 Units.create lesson). Accepts a city ComponentID or a live city object. Logs the
+// plot owner before/after so we can confirm in-game whether purchasePlot escapes the 3-ring radius.
+export function claimPlotForCity(cityOrID, loc) {
+    if (!guardSP()) return false;
+    try {
+        const city = (cityOrID && typeof cityOrID.purchasePlot === 'function') ? cityOrID : Cities.get(cityOrID);
+        if (!city) { ERR('claimPlotForCity: no city for', cityOrID); return false; }
+        if (typeof city.purchasePlot !== 'function') { ERR('claimPlotForCity: city.purchasePlot is not a function'); return false; }
+        const before = ownerCityIdAt(loc);
+        city.purchasePlot(loc);
+        const after = ownerCityIdAt(loc);
+        LOG('claimPlotForCity: purchasePlot (' + loc.x + ',' + loc.y + ') for city', city.id?.id,
+            '| owning-city before:', before, 'after:', after);
+        return true;
+    } catch (e) { ERR('claimPlotForCity failed:', e); return false; }
+}
+
+// Enter the custom "Claim Tiles" map-click mode for a city (INTERFACEMODE_LCP_CLAIM_TILE, registered in
+// claim-tile-mode.js). The caller closes the panel first so the map is fully clickable.
+export function enterClaimMode(city, opts = {}) {
+    if (!guardSP()) return false;
+    const cityID = city?.id;
+    if (!cityID) { ERR('enterClaimMode: no city id'); return false; }
+    try {
+        opts.closePanel?.();
+        if (city.location && typeof Camera !== 'undefined') Camera.lookAtPlot(city.location, { zoom: 0.35 });
+        InterfaceMode.switchTo('INTERFACEMODE_LCP_CLAIM_TILE', { CityID: cityID });
+        LOG('enterClaimMode: entered INTERFACEMODE_LCP_CLAIM_TILE for city', cityID.id);
+        return true;
+    } catch (e) { ERR('enterClaimMode failed:', e); return false; }
+}
+
 export function completeProductionSelected() { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } completeProduction(c); }
 export function addPopulationSelected(amount) { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } addRuralPopulation(c, amount); }
 export function completeProductionAll() { if (!guardSP()) return; for (const c of getLocalCities()) c?.BuildQueue?.completeProduction(); LOG('completed production: all cities'); }

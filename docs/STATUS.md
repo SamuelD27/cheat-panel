@@ -20,11 +20,33 @@ sub-system dock.
 | **M4.1** | Fixes: front-end LOC ref, drop redundant per-city +Gold (⚠ its "F8 in-game" attempt was a save-breaking regression — see M4.1-fix) | ⚠ partially reverted | `bdafc56` |
 | **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | ✅ **verified 2026-05-27** (save loads again) | `061ccde` |
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
-| **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | 🟡 **fixed & deployed (JS-only → Reload UI), NOT yet verified** | `8995e65` |
+| **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
+| **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | 🟡 **implemented & deployed (NEW FILE → needs RESTART), NOT yet verified** | _uncommitted_ |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: Reload UI, verify the M4.2 [Grow] soft-lock guard; decide unlimited-growth direction
+## ▶ Immediate next action: RESTART and verify M4.3 "Claim Tiles"
+
+### M4.3 — [Claim]: add any plot to a city, no radius/growth limit (scope chosen by user: claim-only)
+New per-row **[Claim]** button → `api.enterClaimMode(city)` → custom `INTERFACEMODE_LCP_CLAIM_TILE`
+(`src/ui/cheat-panel/claim-tile-mode.js`, a subclass of the base `ChoosePlotInterfaceMode`). The panel
+closes, the camera pans to the city, then **click any plot on the map** to claim it for that city via
+`city.purchasePlot(loc)` (the tuner's UI-callable path). The mode **stays active** so you can claim
+several tiles; **Esc / right-click** exits.
+
+**Needs a FULL GAME RESTART** (new file `claim-tile-mode.js` added to modinfo `<ImportFiles>` + a new
+side-import in `cheat-panel.js`). After restart:
+1. Cities tab rows now show **[+Pop] [Prod] [Grow] [Claim]**.
+2. **[Claim]** → panel closes, camera centers the city; clicking an adjacent plot adds it to the city.
+3. **The real test — click a plot well BEYOND 3 tiles** from the city. Does it get claimed?
+   - `UI.log` will show `LCP: claimPlotForCity: purchasePlot (x,y) … owning-city before: … after: …`.
+   - If `after` = this city's id → 🎉 unlimited claim works. If ownership doesn't change beyond ~3
+     rings → `purchasePlot` is radius-capped; next iteration switches to
+     `WorldBuilder.MapPlots.setOwnership(playerID, loc)` (any distance, but player- not city-level).
+4. Watch for any **gold deduction** on claim. If it charges gold (and that's unwanted), I'll pre-grant
+   to cover it. Confirm **Esc / right-click** cleanly exits the mode (no soft-lock).
+
+### (resolved) Reload-UI verifications from the previous round
 
 ### 🛑 Regression found & fixed (2026-05-27) — the game couldn't load any save
 **Symptom:** clicking **"Continue Game"** failed — the game bounced back to the main menu instead of

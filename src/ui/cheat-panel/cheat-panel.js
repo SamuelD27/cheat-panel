@@ -14,6 +14,8 @@ import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
 import { renderCityList } from '/base-standard/ui/cheat-panel/tab-cities.js';
 import { ensureListeners, isGlobalInfinite, toggleGlobalInfinite } from '/base-standard/ui/cheat-panel/shared/infinite-move.js';
+// Side-effect import: registers the custom INTERFACEMODE_LCP_CLAIM_TILE handler (M4.3 "Claim Tiles").
+import '/base-standard/ui/cheat-panel/claim-tile-mode.js';
 
 const InputEngineEventName = 'engine-input';
 

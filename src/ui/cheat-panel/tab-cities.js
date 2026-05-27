@@ -89,9 +89,12 @@ export function renderCityList(container, opts = {}) {
         btns.appendChild(mkBtn('Grow', () => {
             const r = api.growCity(city, { closePanel });
             if (r && !r.ok && r.reason === 'no-growth') {
-                flashGrowMsg('No pending growth to place — [Grow] only lets you pick a tile once the city has grown. Use [+Pop] to grow it now (the game auto-picks the tile), or wait for natural growth then [Grow] to choose.');
+                flashGrowMsg('No pending growth to place — [Grow] only lets you pick a tile once the city has grown. Use [+Pop] to grow it now (the game auto-picks the tile), or wait for natural growth then [Grow] to choose, or [Claim] any tile freely.');
             }
         }));
+        // Claim: custom map-click mode — add ANY plot to this city, no 3-tile radius / growth limit
+        // (M4.3). Closes the panel, then click tiles on the map; Esc / right-click exits.
+        btns.appendChild(mkBtn('Claim', () => { api.enterClaimMode(city, { closePanel }); }));
         row.appendChild(btns);
         row.appendChild(growMsg);
 

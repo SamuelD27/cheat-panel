@@ -53,6 +53,7 @@
 					<Item>ui/cheat-panel/shared/infinite-move.js</Item>
 					<Item>ui/cheat-panel/tab-units.js</Item>
 					<Item>ui/cheat-panel/tab-cities.js</Item>
+					<Item>ui/cheat-panel/claim-tile-mode.js</Item>
 				</ImportFiles>
 			</Actions>
 		</ActionGroup>
