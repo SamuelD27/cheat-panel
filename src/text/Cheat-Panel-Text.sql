@@ -40,6 +40,7 @@
 			('LOC_LCP_CHEAT_BTN_ADD_POP_SEL',		'en_US',	"Add Population (Selected)"),
 			('LOC_LCP_CHEAT_BTN_COMPLETE_PROD_ALL',	'en_US',	"[icon:YIELD_PRODUCTION] Complete Production (All Cities)"),
 			('LOC_LCP_CHEAT_BTN_ADD_POP_ALL',		'en_US',	"Add Population (All Cities)"),
+			('LOC_LCP_CHEAT_SECTION_CITY_LIST',		'en_US',	"── All Cities ──"),
 
 			-- Research tab
 			('LOC_LCP_CHEAT_BTN_COMPLETE_RESEARCH',	'en_US',	"[icon:YIELD_SCIENCE] Complete Current Research"),

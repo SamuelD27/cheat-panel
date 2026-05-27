@@ -43,6 +43,7 @@
 					<Item>ui/cheat-panel/shared/api.js</Item>
 					<Item>ui/cheat-panel/shared/infinite-move.js</Item>
 					<Item>ui/cheat-panel/tab-units.js</Item>
+					<Item>ui/cheat-panel/tab-cities.js</Item>
 				</ImportFiles>
 			</Actions>
 		</ActionGroup>

@@ -12,6 +12,7 @@
 import { Panel, FocusManager, DialogBoxManager, DialogBoxAction } from '/base-standard/ui/cheat-panel/shared/imports.js';
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
+import { renderCityList } from '/base-standard/ui/cheat-panel/tab-cities.js';
 import { ensureListeners, isGlobalInfinite, toggleGlobalInfinite } from '/base-standard/ui/cheat-panel/shared/infinite-move.js';
 
 const InputEngineEventName = 'engine-input';
@@ -113,7 +114,7 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-left:hover::before { border-right-color: #ffe9a8; }
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #ffe9a8; }
             .cheat-frame fxs-header { cursor: grab; }
-            .cheat-frame .cheat-unit-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
+            .cheat-frame .cheat-unit-list, .cheat-frame .cheat-city-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
             .cheat-frame .lcp-list-empty { color: #b8a87a; text-align: center; padding: 0.5rem; font-size: 0.8rem; }
             .cheat-frame .lcp-row {
                 display: flex; flex-direction: column;
@@ -228,6 +229,11 @@ class ScreenCheatPanel extends Panel {
         if (refreshUnitsBtn) refreshUnitsBtn.addEventListener("action-activate", () => this.refreshUnitList());
         this.refreshUnitList();
 
+        this.cityListEl = this.Root.querySelector(".cheat-city-list");
+        const refreshCitiesBtn = this.Root.querySelector(".cheat-refresh-cities");
+        if (refreshCitiesBtn) refreshCitiesBtn.addEventListener("action-activate", () => this.refreshCityList());
+        this.refreshCityList();
+
         this.infMoveBtn = this.Root.querySelector(".cheat-inf-move");
         if (this.infMoveBtn) {
             this.updateInfMoveBtn();
@@ -263,6 +269,7 @@ class ScreenCheatPanel extends Panel {
             t.classList.toggle("hidden", !t.classList.contains(`cheat-tab-${id}`));
         });
         if (id === 'units') this.refreshUnitList();
+        if (id === 'cities') this.refreshCityList();
     }
 
     refreshUnitList() {
@@ -271,6 +278,15 @@ class ScreenCheatPanel extends Panel {
             expAmount: () => this.getAmount("exp", this.expAmounts),
             confirm: (key, fn) => this.confirmAndRun(key, fn),
             refresh: () => this.refreshUnitList(),
+        });
+    }
+
+    refreshCityList() {
+        if (!this.cityListEl) return;
+        renderCityList(this.cityListEl, {
+            popAmount: () => this.getAmount("pop", this.popAmounts),
+            goldAmount: () => 1000,
+            refresh: () => this.refreshCityList(),
         });
     }
 

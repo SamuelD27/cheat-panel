@@ -227,8 +227,28 @@ export function getLocalCities() {
     return pc ? pc.getCities() : [];
 }
 
-export function completeProduction(city)        { if (!guardSP()) return; city?.BuildQueue?.completeProduction(); }
-export function addRuralPopulation(city, amount) { if (!guardSP()) return; for (let i = 0; i < amount; i++) city.addRuralPopulation(1); }
+/** Snapshot of a city's display fields, defensive against missing components. (reads only) */
+export function cityDisplay(c) {
+    let name = '(city)';
+    try { name = Locale.compose(c.name); } catch (e) { /* keep fallback */ }
+    let pop = 0, isTown = false, x = -1, y = -1;
+    try { pop = c.population ?? 0; } catch (e) {}
+    try { isTown = !!c.isTown; } catch (e) {}
+    try { const loc = c.location; if (loc) { x = loc.x; y = loc.y; } } catch (e) {}
+    return { name, pop, isTown, x, y };
+}
+
+/** Center the camera on a city's plot. */
+export function lookAtCity(c) {
+    try { if (c.location && typeof Camera !== 'undefined') Camera.lookAtPlot(c.location, { zoom: 0.35 }); }
+    catch (e) { ERR('lookAtCity failed:', e); }
+}
+
+// NOTE: completeProduction / addRuralPopulation call the city's component methods directly (the
+// Sovereign cheat approach; there is no instant-complete CityOperation). If these prove inert from
+// the UI isolate the way Units.create did, route them through Game.CityOperations.sendRequest instead.
+export function completeProduction(city)        { if (!guardSP()) return; city?.BuildQueue?.completeProduction(); LOG('completed production for city', city?.id?.id); }
+export function addRuralPopulation(city, amount) { if (!guardSP()) return; for (let i = 0; i < amount; i++) city.addRuralPopulation(1); LOG('added', amount, 'population to city', city?.id?.id); }
 
 export function completeProductionSelected() { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } completeProduction(c); }
 export function addPopulationSelected(amount) { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } addRuralPopulation(c, amount); }

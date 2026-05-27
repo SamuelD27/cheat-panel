@@ -15,33 +15,44 @@ sub-system dock.
 | **M0** | Fork Sovereign → `src/`, rebrand, junction deploy, git | ✅ done & tested in-game | `a7b4118` |
 | **M1** | Modularize: `shared/imports.js` + `shared/api.js`; `LCP:` logging; single-player guard | ✅ done & tested | `a0a7472` |
 | **M2** | Units tab: per-row unit list (Heal / +XP / Move; click row = camera pan) | ✅ done & tested | `d86c3d6` |
-| **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | 🟡 **1st test found 2 bugs (duplicate, delete) — fixed, re-test pending** | `c6f7f98` (+fixes) |
-| **M4** | Cities tab: per-row city list (set pop / complete prod / +gold) | ⬜ next | — |
+| **M3** | Global ∞-move toggle + Duplicate Selected Unit + per-row Delete | ✅ **done & verified in-game (2026-05-27)** | `c6f7f98` +`e8a8ea1` +dup-rewrite |
+| **M4** | Cities tab: per-row city list (set pop / complete prod / +gold) | 🟡 **implemented & deployed, NOT yet verified (user away)** | — |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RE-verify M3 in-game (after the two fixes below)
+## ▶ Immediate next action: verify M4 in-game (user was away during the build)
 
-**M3 first test (2026-05-27) result:**
-- ✅ ∞-move toggle works (minor caveat → `docs/Minor_todos.md` #1; de-prioritized).
-- ❌ **Duplicate did nothing** → fixed.
-- ❌ **Delete: confirm dialog appeared but CONFIRM did nothing** → fixed.
+**M4 needs a FULL GAME RESTART** (new file `tab-cities.js` registered in the modinfo + a new text
+string), not just Reload UI. Then **F8 → Cities tab**, scroll to the **"── All Cities ──"** list:
+1. Each city shows a row: `<name> · pop N · prod:<item|idle> · (x,y)`. Click the **label** → camera
+   pans to the city.
+2. **[+Pop]** (uses the pop stepper amount at the top of the tab) → city population ticks up in the row.
+3. **[Prod]** → completes the city's current production (the `prod:` field should change / banner shows
+   it finished next tick).
+4. **[+Gold]** → adds 1,000 gold to the treasury (watch the top-bar gold). _(Gold is a player resource;
+   the per-row button is just a convenience — it adds to the empire treasury, not "to that city".)_
+5. **[Refresh]** rebuilds the list.
 
-**Fixes applied (JS-only, in `shared/api.js` — re-test needs only `~` → UI → Reload UI):**
-- `duplicateUnit`: `Units.create`'s `Type` must be a build-unit handle from
-  `player.Units.getBuildUnit(def.UnitType)`, not the raw `unit.type` hash (we were passing the hash).
-  Resolves the hash via `GameInfo.Units.lookup`. Matches base `age-transition-post-load.js`.
-- `deleteUnit`: switched `UNITCOMMAND_DISBAND` → `UNITCOMMAND_DELETE` (the unconditional in-game
-  trash-button command; disband is contextual and its `canStart` rejects silently) and now passes the
-  standard `{X:-9999, Y:-9999, UnitAbilityType:-1}` param block instead of `{}`.
+⚠ **Risk to watch (the `Units.create` lesson):** `+Pop` and `Prod` call the city's component methods
+directly (`city.addRuralPopulation` / `city.BuildQueue.completeProduction`) — the Sovereign approach,
+and the only path that exists (there is **no** instant-complete CityOperation). If either does nothing
+in-game, the fix is to route it through `Game.CityOperations.sendRequest(cityID, …)` like the base UI's
+build-queue does — see the M3 dup saga below. `+Gold` uses `Treasury.changeGoldBalance` (proven in M0),
+so it should always work; if only gold works, that confirms the direct-method theory.
 
-Re-test (F8 → Units tab):
-1. **Duplicate Selected Unit** — select a unit in-game, click the button → a plain copy of the same
-   type appears on an adjacent free tile (no XP/promotions). Confirm placement is adjacent, not stacked.
-2. **Per-row [Del]** — confirm dialog → CONFIRM → unit is removed and the list refreshes.
-3. Quick re-confirm **[Heal] [+XP] [Move]** and the **∞-move toggle** still behave.
-
-Then, on the user's confirmation, proceed to **M4**.
+### M3 outcome (DONE, verified 2026-05-27) — and the key API lesson
+- ✅ ∞-move toggle (minor caveat: units spawned while ON → `docs/Minor_todos.md` #1).
+- ✅ Delete: was `UNITCOMMAND_DISBAND` (contextual, silently rejected) → now `UNITCOMMAND_DELETE` with
+  the standard `{X,Y,UnitAbilityType}` params.
+- ✅ Duplicate: **the big lesson** — `Units.create` is a gameplay-SCRIPT API and returns
+  `{Success:false}` from the panel (UI) isolate even on a validated empty tile. The UI-isolate way to
+  spawn a unit is the **tuner path**: `Game.PlayerOperations.sendRequest(pid, "CREATE_ELEMENT",
+  {Kind:"UNIT", Type:unit.type, Location, Owner, IndependentIndex:-1})`. Duplicate now also validates
+  the target tile itself (`findPlacementPlot`/`plotBlockReason` in `api.js`: in-bounds, land, not
+  mountain/impassable, no other-player unit, no same-`FormationClass` stack).
+- 🔎 **Rule of thumb going forward:** state-mutating engine calls usually need a UI-callable
+  `*.sendRequest` operation (PlayerOperations / UnitCommands / CityOperations); direct
+  `Units.create`-style methods may be inert from the panel. Verify against an actual `ui/` call site.
 
 ## ⚠ Open issue: Steam launch error 0x20 (ERROR_SHARING_VIOLATION)
 On 2026-05-27 the game failed to launch from Steam: _"le processus ne peut pas accéder au fichier car
