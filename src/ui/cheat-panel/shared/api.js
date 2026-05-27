@@ -104,14 +104,60 @@ export function deleteUnit(unitId) {
     } catch (e) { ERR('deleteUnit failed:', e); }
 }
 
+// ─── UNIT placement validation (reads only) ───────────────────────────
+// Why we validate ourselves instead of trusting Units.create({Validate:true}): in-game that flag
+// rejected the occupied source plot AND every empty neighbor (all returned {Success:false}), so it's
+// not a usable "find me a legal tile" filter here. We check the plot rules explicitly, then create
+// without the flag (the base age-transition commander create also omits it and the engine seats the
+// unit). All accessors are ambient UI-isolate globals (GameplayMap/MapUnits/Units/GameInfo).
+
 /**
- * Duplicate a unit: spawn a plain copy of the same unit type. Validate:true makes the engine place
- * it on an available adjacent tile when the source plot is occupied. No promotions or XP are copied.
- * Returns the clone's ComponentID or null.
+ * Returns null if a unit of `domain`/`formationClass` owned by `owner` may legally stand on `loc`,
+ * otherwise a short reason string (used for logging). Rules:
+ *  - in map bounds; matches domain (land/air -> land tile, sea -> water tile)
+ *  - not a mountain, not otherwise impassable
+ *  - no OTHER player's unit on the tile (any kind blocks)
+ *  - no friendly unit sharing the clone's FormationClass (the per-class stacking limit)
+ */
+function plotBlockReason(loc, domain, formationClass, owner) {
+    if (!GameplayMap.isValidLocation(loc)) return 'offmap';
+    const { x, y } = loc;
+    const water = GameplayMap.isWater(x, y);
+    if (domain === 'DOMAIN_SEA') { if (!water) return 'notwater'; }
+    else if (water) return 'water';
+    if (GameplayMap.isMountain(x, y)) return 'mountain';
+    if (GameplayMap.isImpassable(x, y)) return 'impassable';
+    for (const id of MapUnits.getUnits(x, y)) {
+        if (id.owner !== owner) return 'enemyunit';                   // another player's unit — any kind
+        const other = Units.get(id);
+        const otherFC = other ? GameInfo.Units.lookup(other.type)?.FormationClass : null;
+        if (otherFC && otherFC === formationClass) return 'sameclass'; // can't stack same FormationClass
+    }
+    return null;
+}
+
+/** First adjacent hex where a clone of `def` (owned by `owner`) can legally stand, or null. */
+function findPlacementPlot(loc, def, owner) {
+    const scan = [];
+    for (let dir = 0; dir < DirectionTypes.NUM_DIRECTION_TYPES; dir++) {
+        const adj = GameplayMap.getAdjacentPlotLocation(loc, dir);
+        const why = plotBlockReason(adj, def.Domain, def.FormationClass, owner);
+        if (!why) return adj;                       // first legal neighbor wins
+        scan.push(`(${adj.x},${adj.y})=${why}`);
+    }
+    ERR(`findPlacementPlot: no legal adjacent plot for ${def.UnitType} near (${loc.x},${loc.y}) — ${scan.join(' ')}`);
+    return null;
+}
+
+/**
+ * Duplicate a unit: spawn a plain copy of the same unit type on a legal adjacent tile (validated by
+ * findPlacementPlot — no mountain, no enemy-occupied tile, no same-FormationClass stack). No XP or
+ * promotions are copied.
  *
- * Units.create's `Type` is NOT the unit's `.type` hash — it expects a "build unit" handle obtained
- * via player.Units.getBuildUnit("UNIT_..."). The hash resolves to its UnitType string through
- * GameInfo.Units.lookup(). (Verified in base age-transition-post-load.js createUnitFromShadow...().)
+ * Spawns via the CREATE_ELEMENT player operation — the UI-isolate path the in-game tuner uses
+ * (base tuner-input.js). Units.create is a gameplay-SCRIPT API and silently returns {Success:false}
+ * from the panel isolate (confirmed in-game even on a validated empty tile). PlayerOperations
+ * sendRequest is fire-and-forget (no synchronous ID), so we return the target plot on success.
  */
 export function duplicateUnit(unit) {
     if (!guardSP()) return null;
@@ -120,15 +166,14 @@ export function duplicateUnit(unit) {
         const loc = unit?.location;
         const def = (unit?.type != null) ? GameInfo.Units.lookup(unit.type) : null;
         if (!def || !loc) { ERR('duplicateUnit: missing type/location', unit?.type, loc); return null; }
-        const player = Players.get(owner);
-        const buildUnit = player?.Units?.getBuildUnit(def.UnitType);
-        if (buildUnit == null) { ERR('duplicateUnit: getBuildUnit returned null for', def.UnitType); return null; }
-        const result = Units.create(owner, { Type: buildUnit, Location: loc, Validate: true });
-        if (result && result.Success && result.ID) {
-            LOG('duplicated', def.UnitType, '; clone id', result.ID?.id);
-            return result.ID;
-        }
-        ERR('duplicateUnit: Units.create did not succeed:', result);
+
+        const target = findPlacementPlot(loc, def, owner);
+        if (!target) return null;                   // findPlacementPlot logged the per-neighbor reasons
+
+        const args = { Kind: "UNIT", Type: unit.type, Location: target, Owner: owner, IndependentIndex: -1 };
+        Game.PlayerOperations.sendRequest(owner, "CREATE_ELEMENT", args);
+        LOG('duplicated', def.UnitType, 'at', `(${target.x},${target.y})`, 'via CREATE_ELEMENT');
+        return target;
     } catch (e) { ERR('duplicateUnit failed:', e); }
     return null;
 }
