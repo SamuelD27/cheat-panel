@@ -4,9 +4,12 @@
  *
  * Mirrors tab-units.js (this build has no `fxs-list` element — plain scrollable DOM rows). Each row
  * shows "<name>[ · town] · pop N · (x,y)" (clicking the label centers the camera) plus one button row:
- *   [+Pop] [Prod]
+ *   [+Pop] [Prod] [Grow]
  *   - +Pop  : add rural population (amount from the tab's pop stepper)
  *   - Prod  : complete the city's current production
+ *   - Grow  : close the panel and open the game's native tile picker (INTERFACEMODE_ACQUIRE_TILE) so
+ *             you can claim adjacent tiles into this city — adjacency-only, no distance cap. Claim-only;
+ *             the engine has no relinquish/give-up-tile command.
  * (The old per-row [+Gold] was removed — gold is an empire-wide resource already covered by the
  *  Player tab's Add Gold buttons, so a per-city copy was redundant.)
  * All engine access goes through ./shared/api.js (SP-guarded).
@@ -17,13 +20,15 @@ import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
  * (Re)build the city list inside `container`.
  * @param {HTMLElement} container  the .cheat-city-list element
  * @param {object} opts
- * @param {() => number} opts.popAmount   current +Pop stepper amount
- * @param {() => void} opts.refresh       rebuild the list
+ * @param {() => number} opts.popAmount    current +Pop stepper amount
+ * @param {() => void} opts.refresh        rebuild the list
+ * @param {() => void} opts.closePanel     close the cheat panel (called before entering the tile picker)
  */
 export function renderCityList(container, opts = {}) {
     if (!container) return;
     const popAmount = opts.popAmount || (() => 1);
     const refresh = opts.refresh || (() => {});
+    const closePanel = opts.closePanel || (() => {});
 
     container.innerHTML = '';
 
@@ -65,6 +70,8 @@ export function renderCityList(container, opts = {}) {
         btns.className = 'lcp-row-btns';
         btns.appendChild(mkBtn('+Pop', () => { api.addRuralPopulation(city, popAmount()); paint(); }));
         btns.appendChild(mkBtn('Prod', () => { api.completeProduction(city); paint(); }));
+        // Grow: leave the panel (so the map is fully clickable) then enter the native tile picker.
+        btns.appendChild(mkBtn('Grow', () => { closePanel(); api.growCity(city); }));
         row.appendChild(btns);
 
         container.appendChild(row);

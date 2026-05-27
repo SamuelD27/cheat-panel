@@ -286,6 +286,7 @@ class ScreenCheatPanel extends Panel {
         renderCityList(this.cityListEl, {
             popAmount: () => this.getAmount("pop", this.popAmounts),
             refresh: () => this.refreshCityList(),
+            closePanel: () => this.close(),
         });
     }
 

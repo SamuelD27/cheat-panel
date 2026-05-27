@@ -4,11 +4,13 @@
  *
  * This is the one place cheat logic touches the engine, so any future API drift is a one-file fix.
  * Uses ambient engine globals (Players, Units, Cities, Game, GameContext, GameInfo, YieldTypes, UI,
- * Configuration) — these are provided by the UI isolate and need no import. No /core imports here;
- * those live only in ./imports.js.
+ * Configuration) — these are provided by the UI isolate and need no import. The one cross-module
+ * import (InterfaceMode) still comes via ./imports.js, so the "/core imports only in imports.js" rule
+ * is intact — api.js never imports from /core directly.
  *
  * All calls below are verified against build 23245653 (from the proven Sovereign panel + base UI).
  */
+import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
 
 export const LOG = (...a) => console.log('LCP:', ...a);
 export const ERR = (...a) => console.error('LCP:', ...a);
@@ -249,6 +251,37 @@ export function lookAtCity(c) {
 // the UI isolate the way Units.create did, route them through Game.CityOperations.sendRequest instead.
 export function completeProduction(city)        { if (!guardSP()) return; city?.BuildQueue?.completeProduction(); LOG('completed production for city', city?.id?.id); }
 export function addRuralPopulation(city, amount) { if (!guardSP()) return; for (let i = 0; i < amount; i++) city.addRuralPopulation(1); LOG('added', amount, 'population to city', city?.id?.id); }
+
+// ─── CITY TERRITORY GROWTH (M4.2) ─────────────────────────────────────
+// Opens the game's own "grow city" tile picker for one city. INTERFACEMODE_ACQUIRE_TILE is the same
+// on-map picker the base UI uses when a city grows: it highlights only valid ADJACENT plots (adjacency
+// is the engine's only rule — there is no ring/distance cap, which is exactly what we want) and, when
+// the player commits a plot, fires Game.CityCommands.sendRequest(cityID, EXPAND, {X,Y}) for us. There
+// is NO relinquish/remove-plot counterpart in this build, so growth is claim-only.
+// Refs: base-standard/ui/interface-modes/interface-mode-acquire-tile.js,
+//       base-standard/ui/place-population/model-place-population.js.
+export function growCity(city) {
+    if (!guardSP()) return false;
+    const cityID = city?.id;
+    if (!cityID) { ERR('growCity: no city id'); return false; }
+    try {
+        // Diagnostic probe: how many adjacent plots does the engine currently offer? This answers the
+        // open question of whether EXPAND is gated on a pending growth/worker slot. Defensive —
+        // CityCommandTypes may not be an ambient global on every build, so fall back to the string.
+        try {
+            const cmd = (typeof CityCommandTypes !== 'undefined') ? CityCommandTypes.EXPAND : 'EXPAND';
+            const res = Game.CityCommands?.canStart?.(cityID, cmd, {}, false);
+            const n = (res && res.Plots) ? res.Plots.length : 0;
+            LOG('growCity: EXPAND offers', n, 'plot(s) for city', cityID.id, '(Success=' + (res ? res.Success : '?') + ')');
+        } catch (e) { ERR('growCity: canStart probe failed:', e); }
+
+        // Pan to the city first — the player clicked a list row, not the map, so center the picker.
+        if (city.location && typeof Camera !== 'undefined') Camera.lookAtPlot(city.location, { zoom: 0.4 });
+        InterfaceMode.switchTo('INTERFACEMODE_ACQUIRE_TILE', { CityID: cityID });
+        LOG('growCity: entered INTERFACEMODE_ACQUIRE_TILE for city', cityID.id);
+        return true;
+    } catch (e) { ERR('growCity failed:', e); return false; }
+}
 
 export function completeProductionSelected() { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } completeProduction(c); }
 export function addPopulationSelected(amount) { const c = getSelectedCity(); if (!c) { ERR('no city selected'); return; } addRuralPopulation(c, amount); }
