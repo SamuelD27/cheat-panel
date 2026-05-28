@@ -439,14 +439,17 @@ export function getMapDimensions() {
 // Single-pass snapshot of the entire map. Returns:
 //   {
 //     width, height,
-//     plots: [{terr, biome, water, mountain, hills, river, nw, hasResource}] indexed by (y*width + x)
-//     cities: [{x, y, name, color, isCapital, ownerID}]
+//     plots:     [{terr, biome, water, mountain, hills, river, nw, hasResource}] indexed by y*W+x
+//     cities:    [{x, y, name, color, isCapital, ownerID}]
 //     resources: [{x, y, cls}] where cls is the ResourceClassType string
+//     myUnits:   [{x, y, name, kind, color}] LOCAL PLAYER ONLY (no AI / no other-player units)
 //   }
 // Iterating ~6000 plots takes well under 100ms; cached at the call site so tab re-renders are free.
+// `myUnits` is intentionally limited to the local player — the user explicitly asked NOT to track AI.
 export function getMapSnapshot(opts = {}) {
     const includeCities    = opts.includeCities    !== false;
     const includeResources = opts.includeResources !== false;
+    const includeMyUnits   = opts.includeMyUnits   !== false;
     const { width: W, height: H } = getMapDimensions();
     if (!W || !H) return { width: 0, height: 0, plots: null, cities: [], resources: [] };
 
@@ -522,7 +525,36 @@ export function getMapSnapshot(opts = {}) {
         } catch (e) { ERR('getMapSnapshot cities failed:', e); }
     }
 
-    return { width: W, height: H, plots, cities, resources };
+    // Local player's units only — used by the minimap "Me" filter so the player can see where their
+    // starting settler is (etc.) without revealing AI positions or having to scout the map.
+    const myUnits = [];
+    if (includeMyUnits) {
+        try {
+            const me = getLocalPlayer();
+            if (me && me.Units && typeof me.Units.getUnits === 'function') {
+                let color = null;
+                try {
+                    const pc = UI?.Color?.getPlayerColors?.(me.id);
+                    if (pc?.primaryColor) {
+                        const c = pc.primaryColor;
+                        color = 'rgb(' + Math.round((c.r || 0) * 255) + ',' + Math.round((c.g || 0) * 255) + ',' + Math.round((c.b || 0) * 255) + ')';
+                    }
+                } catch (_) {}
+                for (const u of me.Units.getUnits()) {
+                    try {
+                        if (!u?.location) continue;
+                        let name = '(unit)';
+                        try { name = Locale.compose(u.name); } catch (_) {}
+                        let kind = '';
+                        try { kind = GameInfo?.Units?.lookup?.(u.type)?.Domain || ''; } catch (_) {}
+                        myUnits.push({ x: u.location.x, y: u.location.y, name, kind, color });
+                    } catch (_) {}
+                }
+            }
+        } catch (e) { ERR('getMapSnapshot myUnits failed:', e); }
+    }
+
+    return { width: W, height: H, plots, cities, resources, myUnits };
 }
 
 // ─── RESEARCH / CIVIC ─────────────────────────────────────────────────

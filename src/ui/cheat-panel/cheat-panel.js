@@ -163,6 +163,33 @@ class ScreenCheatPanel extends Panel {
                 text-transform: uppercase; text-align: center;
                 margin: 0.5rem 0 0.25rem 0; opacity: 0.85;
             }
+            /* M5.1-fix: the original M5.1 only restyled OUR plain .lcp-row-btn / .lcp-toggle-btn
+               buttons — but the Player/Units/Cities/Research tabs are full of <fxs-button>s, which
+               keep the engine's gold-gradient look. Result: the user said "the restyle didn't show
+               up". fxs-button uses light DOM (verified in core/ui/components/fxs-button.js), so we
+               can target its background layers from outside. We dim the whole engine button via
+               saturate/brightness (works regardless of the 9-slice texture composition) and dim
+               the panel's parchment backdrop with a translucent inset shadow. The minimap canvas is
+               filter:none so its terrain colors are not desaturated. */
+            .cheat-frame {
+                box-shadow: inset 0 0 0 9999px rgba(8, 6, 3, 0.18);
+            }
+            .cheat-frame fxs-button {
+                filter: saturate(0.6) brightness(0.88);
+            }
+            .cheat-frame fxs-button:hover {
+                filter: saturate(0.7) brightness(0.96);
+            }
+            .cheat-frame fxs-tab-bar {
+                filter: saturate(0.7);
+            }
+            .cheat-frame fxs-header {
+                filter: saturate(0.65) brightness(0.92);
+            }
+            .cheat-frame .lcp-minimap,
+            .cheat-frame .lcp-map-type-list {
+                filter: none;            /* preserve raw minimap colors / type-list contrast */
+            }
         `;
         document.head.appendChild(style);
     }

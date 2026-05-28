@@ -24,11 +24,41 @@ sub-system dock.
 | **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
 | **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | ✅ **verified 2026-05-28** (claim works, including beyond 3 rings) | `10968eb` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot via `WorldBuilder.MapPlots.set*` + custom `INTERFACEMODE_LCP_PAINT_TILE` (mode stays active across clicks; Esc/right-click exits) | 🟡 **implemented & deployed (new files + modinfo + DB → needs RESTART), NOT yet verified** | `ddbf01b` |
-| **M5.1** | Panel restyle (light touch): flat fills (no gradients), bronze-dimmed gold, thinner less-yellow borders, less-rounded corners, darker row backgrounds. CSS-only override scoped to `.cheat-frame`; structural `fxs-*` components untouched | 🟡 **implemented (JS-only, no DB/modinfo change), NOT yet verified** | `6ce991b` |
-| **M5.2** | In-panel **Map Preview** minimap: read-only canvas rendering of the full map (terrain + biome tint + hills + mountain + rivers + natural wonders). Filter toggles: Cities, Resources. Pure `GameplayMap.*` reads — does NOT touch fog-of-war or grant in-game vision | 🟡 **implemented (JS-only, no DB/modinfo change), NOT yet verified** | `e683275` |
+| **M5.1** | Panel restyle (light touch): flat fills (no gradients), bronze-dimmed gold, thinner less-yellow borders, less-rounded corners, darker row backgrounds. CSS-only override scoped to `.cheat-frame`; structural `fxs-*` components untouched | ⚠ shipped but the restyle wasn't visible (only caught our plain DOM buttons, not the Civ `fxs-button` controls in Player/Units/Cities/Research tabs); see M5.1-fix | `6ce991b` |
+| **M5.2** | In-panel **Map Preview** minimap: read-only canvas rendering of the full map (terrain + biome tint + hills + mountain + rivers + natural wonders). Filter toggles: Cities, Resources. Pure `GameplayMap.*` reads — does NOT touch fog-of-war or grant in-game vision | ⚠ shipped but: native `<input type=checkbox>` widened the panel on click (Gameface mishandled them), map too small to read, no "Me" filter for own units; see M5.2-fix | `e683275` |
+| **M5.1-fix** | Restyle catches `fxs-button` too: filter `saturate(0.6) brightness(0.88)` on every `fxs-button` (light DOM, verified in core/ui/components/fxs-button.js); plus translucent inset shadow over `.cheat-frame` to dim the parchment backdrop. Canvas + type-list are `filter:none` so their colors stay accurate | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | _pending_ |
+| **M5.2-fix** | Filters become **toggle buttons** (no native `<input type=checkbox>`), **default tile size 8px** with **zoom −/+** buttons (2..20px range), new **Me** filter renders the local player's units as small triangles in the civ's primary color (no AI tracked). Status line reports zoom + counts | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | _pending_ |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART once, verify M5 + M5.1 + M5.2 together
+## ▶ Immediate next action: Reload UI, verify M5.1-fix + M5.2-fix
+
+JS-only — no `.modinfo` / database / new files. In-game: `~` → UI → **Reload UI** (no restart needed).
+
+### 🛑 M5.1 + M5.2 issues found & fixed (2026-05-28, post-restart)
+
+**Symptoms reported in-game:**
+1. **Restyle didn't show.** The panel still looked like the unmodified Civ panel.
+2. **Filter checkboxes broken.** Clicking Cities/Resources widened the panel and added a huge black band beside the minimap.
+3. **Minimap too small to read** ("just a bunch of pixels").
+4. **No way to see own units** — the user wants to find their starting settler/colon on a new game without revealing AI.
+
+**Root causes:**
+1. The M5.1 CSS only targeted MY plain DOM buttons (`.lcp-row-btn`, `.lcp-toggle-btn`). The Player/Units/Cities/Research tabs are full of `<fxs-button>` controls, which keep the engine's gold-gradient `border-image: url("blp:base_button-bg")` look (verified in `core/ui/components/fxs-button.js` — light DOM, classes `fxs-button__bg--base/focus/active/disabled`). So the visible "main" buttons were unchanged.
+2. Coherent Gameface in this build renders native `<input type=checkbox>` with a huge intrinsic size and flaky `change` event handling, which pushed the panel layout sideways.
+3. Default tile size was `max(2, floor((wrapW-8) / (W+0.5)))` ≈ 4px on standard maps. Way too small to read terrain shape or distinguish features.
+4. The snapshot collected cities + resources only; no own-unit data.
+
+**Fixes:**
+1. **M5.1-fix:** add `filter: saturate(0.6) brightness(0.88)` to `.cheat-frame fxs-button` (and lighter values to `fxs-tab-bar` / `fxs-header`). Also a translucent inset `box-shadow` on `.cheat-frame` dims the parchment backdrop. Minimap canvas + type-list explicitly `filter: none` so their colors are not desaturated.
+2. **M5.2-fix:** filters are now **toggle buttons** (the same `.lcp-row-btn .active` pattern we know works in this build). No native checkboxes anywhere.
+3. **M5.2-fix:** default zoom **8 px/tile** with **−/+ buttons** (range 2..20). Canvas wrap is `max-width:100% min-width:0 max-height:22rem overflow:auto`, so a wide/tall canvas scrolls inside the wrap and never pushes panel layout.
+4. **M5.2-fix:** new **"Me"** toggle. `api.getMapSnapshot({includeMyUnits:true})` iterates `getLocalPlayer().Units.getUnits()` and returns `myUnits: [{x, y, name, kind, color}]` — **local player only** (no AI / no other-player units, per the request). Rendered as small filled triangles in the civ's primary color so they're distinct from city squares and can sit on the same tile (e.g. settler in your capital). Status line now reports your unit count too.
+
+_Lessons:_
+- Civ7 `fxs-button` is light DOM with composable `.fxs-button__bg--*` layers — restylable from outside, but our CSS must explicitly target it (parent-class overrides like `.cheat-frame .lcp-row-btn` do **not** apply to children-of-fxs-button).
+- Native form controls in Coherent Gameface are a layout hazard in this build — always use custom button widgets with `.active`/no-`.active` classes.
+
+
 
 (Since all three landed before the restart, one restart covers them. M5 alone forces the restart — M5.1
 and M5.2 are JS-only and would otherwise be Reload-UI-only.)
