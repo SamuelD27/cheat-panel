@@ -352,6 +352,70 @@ export function addPopulationSelected(amount) { const c = getSelectedCity(); if 
 export function completeProductionAll() { if (!guardSP()) return; for (const c of getLocalCities()) c?.BuildQueue?.completeProduction(); LOG('completed production: all cities'); }
 export function addPopulationAll(amount) { if (!guardSP()) return; for (const c of getLocalCities()) for (let i = 0; i < amount; i++) c.addRuralPopulation(1); LOG('added population: all cities'); }
 
+// ─── MAP PAINT (M5) ───────────────────────────────────────────────────
+// UI-callable map paint via WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}, the same path
+// the in-game tuner uses (base ui/tuner-input/tuner-input.js lines 48/52/56/104). The set* methods
+// expect a numeric type hash: tuner-input clears with FeatureTypes.NO_FEATURE / ResourceTypes.NO_RESOURCE
+// (engine-exposed hash constants), and adjacent code uses Database.makeHash("STRING") for type strings
+// (lines 100/109). So for an arbitrary type string we hash via Database.makeHash and pass that. Resource
+// takes a third "amount" argument (the resource count); the tuner passes 1 for the normal case, 0 to
+// erase — we default to 1.
+//
+// Enumerates all types in a paint category for the type-picker list. Returns [{type, name}] where
+// `type` is the *Type string (e.g. "TERRAIN_GRASS") and `name` is the localized display label.
+// GameInfo.{Terrains,Features,Resources,Biomes} are the gameplay tables exposed to the UI isolate
+// (verified in base ui/* code: GameInfo.Terrains.lookup, GameInfo.Resources.lookup, etc.).
+export function getMapPaintTypes(category) {
+    const out = [];
+    const tableKey = { Terrain: 'Terrains', Feature: 'Features', Resource: 'Resources', Biome: 'Biomes' }[category];
+    const colKey   = { Terrain: 'TerrainType', Feature: 'FeatureType', Resource: 'ResourceType', Biome: 'BiomeType' }[category];
+    if (!tableKey || !colKey) { ERR('getMapPaintTypes: unknown category', category); return out; }
+    if (typeof GameInfo === 'undefined' || !GameInfo[tableKey]) { ERR('getMapPaintTypes: no GameInfo.' + tableKey); return out; }
+    try {
+        for (const row of GameInfo[tableKey]) {
+            const type = row[colKey];
+            if (!type) continue;
+            let name = type;
+            try { if (row.Name) name = Locale.compose(row.Name); } catch (_) { /* keep raw string */ }
+            out.push({ type, name });
+        }
+        out.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) { ERR('getMapPaintTypes failed for', category, e); }
+    return out;
+}
+
+// Apply a single paint to one plot. Dispatches to the correct WorldBuilder.MapPlots.set* per category.
+export function paintPlot(category, typeString, loc) {
+    if (!guardSP()) return false;
+    if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('paintPlot: bad loc', loc); return false; }
+    if (!typeString) { ERR('paintPlot: no type string'); return false; }
+    try {
+        const hash = Database.makeHash(typeString);
+        switch (category) {
+            case 'Terrain':  WorldBuilder.MapPlots.setTerrain(hash, loc); break;
+            case 'Feature':  WorldBuilder.MapPlots.setFeature(hash, loc); break;
+            case 'Resource': WorldBuilder.MapPlots.setResource(hash, loc, 1); break;
+            case 'Biome':    WorldBuilder.MapPlots.setBiome(hash, loc); break;
+            default: ERR('paintPlot: unknown category', category); return false;
+        }
+        LOG('paint', category, typeString, 'at (' + loc.x + ',' + loc.y + ')');
+        return true;
+    } catch (e) { ERR('paintPlot failed:', e); return false; }
+}
+
+// Enter the custom paint map-click mode (INTERFACEMODE_LCP_PAINT_TILE, registered in paint-tile-mode.js).
+// Mirrors enterClaimMode: the caller closes the panel first so the map is fully clickable.
+export function enterPaintMode({ category, typeString }, opts = {}) {
+    if (!guardSP()) return false;
+    if (!category || !typeString) { ERR('enterPaintMode: missing category/type', category, typeString); return false; }
+    try {
+        opts.closePanel?.();
+        InterfaceMode.switchTo('INTERFACEMODE_LCP_PAINT_TILE', { Category: category, TypeString: typeString });
+        LOG('enterPaintMode: entered for', category, '=', typeString);
+        return true;
+    } catch (e) { ERR('enterPaintMode failed:', e); return false; }
+}
+
 // ─── RESEARCH / CIVIC ─────────────────────────────────────────────────
 // Completion is done by overflowing the relevant yield (the verified Sovereign approach) — there is
 // no direct setResearchProgress on this build.

@@ -22,13 +22,57 @@ sub-system dock.
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
 | **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
 | **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
-| **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | 🟡 **implemented & deployed (modinfo + new XML → needs RESTART), NOT yet verified** | `10968eb` |
-| **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
+| **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | ✅ **verified 2026-05-28** (claim works, including beyond 3 rings) | `10968eb` |
+| **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot via `WorldBuilder.MapPlots.set*` + custom `INTERFACEMODE_LCP_PAINT_TILE` (mode stays active across clicks; Esc/right-click exits) | 🟡 **implemented & deployed (new files + modinfo + DB → needs RESTART), NOT yet verified** | _pending_ |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART and verify M4.3-fix "Claim Tiles" (DB registration)
+## ▶ Immediate next action: RESTART and verify M5 "Map Paint"
 
-### 🛑 M4.3 first-attempt issue & fix (2026-05-28)
+### M5 — Map tab: paint terrain/feature/resource/biome on a clicked plot
+New 5th tab **Map** between Cities and Research. Layout:
+- 4 category buttons: **[Terrain] [Feature] [Resource] [Biome]** (one active).
+- A status line ("Selected: Terrain = TERRAIN_GRASS").
+- **[Paint at clicked tile]** button → panel closes → enters `INTERFACEMODE_LCP_PAINT_TILE`
+  (custom map-click mode, `paint-tile-mode.js`, subclass of `ChoosePlotInterfaceMode` like the M4.3
+  Claim mode). Every plot click applies the current paint via
+  `WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}` (tuner-input.js path) using
+  `Database.makeHash("TERRAIN_GRASS")` as the type arg. Mode **stays active** across clicks; **Esc /
+  right-click** exits cleanly.
+- A scrollable list of all valid types for the active category (enumerated from
+  `GameInfo.{Terrains,Features,Resources,Biomes}`, with localized names — hover shows the raw `*Type`
+  string used for the `makeHash` argument).
+
+Resource paint passes a count of 1 (matching the tuner's normal-case third arg).
+
+Both pre-flight lessons from M4.3 are applied: handler is registered in JS (`InterfaceMode.addHandler`)
+AND `INTERFACEMODE_LCP_PAINT_TILE` is declared in `database/interface-modes.xml` (game-scope
+`<UpdateDatabase>`) — otherwise the picker view opens but no plot input reaches the handler.
+
+**Needs a FULL GAME RESTART** (new files `tab-map.js` + `paint-tile-mode.js` added to modinfo
+`<ImportFiles>`, new tab-bar entry, new DB row, new LOC string). After restart:
+1. Open the panel (dock skull) → switch to the **Map** tab.
+2. Default category is **Terrain**. Type list should be populated (Grass, Plains, Coast, Mountain,
+   Hills, etc.). Click one — it highlights and the status line updates.
+3. Click **[Paint at clicked tile]**. Panel closes; you're in the paint picker (camera stays put).
+4. Click any plot on the map. Watch for the terrain visually changing (terrain may need a redraw —
+   moving the camera over the plot usually triggers it; or the next turn).
+5. Click several plots — the mode **stays active** between clicks (matches Claim mode).
+6. Press **Esc** or right-click → mode exits cleanly, no soft-lock.
+7. In `UI.log` filter `LCP:` — each paint logs `LCP: paint Terrain TERRAIN_GRASS at (x,y)`.
+8. Switch category to **Feature** (Forest, Marsh, etc.), **Resource** (Iron, Horses, etc.), or **Biome**
+   (Tropical, Tundra, etc.) → repeat. (Resource takes a count of 1; tuner uses the same.)
+
+**Open ❓ to verify in-game:**
+- Some types may visually fail to refresh until the next turn or until the camera moves over them
+  (`tuner-input.js` has comments about terrain refresh elsewhere). If a paint doesn't show, end-turn
+  and re-check.
+- Some Terrain values (e.g. `TERRAIN_OCEAN`) on land plots may need a Biome change too. If a paint
+  rejects silently, the log won't show an error (`set*` doesn't return a result). Try a likelier-valid
+  combo (Grass on a Flat plot) first.
+- Resource amount fixed at 1 — works for normal strategic resources. Will revisit if specific resources
+  need a different count.
+
+### (resolved) M4.3 first-attempt issue & fix (2026-05-28)
 **Symptom (reported in-game):** clicking **[Claim]** opened the plot picker (UI/camera switched), but **no
 plots were selectable** — same dead-end UX as the M4.2 "no pending growth" soft-lock.
 **Root cause (confirmed in `UI.log`):** the engine logged repeatedly

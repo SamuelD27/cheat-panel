@@ -11,6 +11,7 @@
 			('LOC_LCP_CHEAT_TAB_PLAYER',			'en_US',	"Player"),
 			('LOC_LCP_CHEAT_TAB_UNITS',				'en_US',	"Units"),
 			('LOC_LCP_CHEAT_TAB_CITIES',			'en_US',	"Cities"),
+			('LOC_LCP_CHEAT_TAB_MAP',				'en_US',	"Map"),
 			('LOC_LCP_CHEAT_TAB_RESEARCH',			'en_US',	"Research"),
 
 			-- Section dividers

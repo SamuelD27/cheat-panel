@@ -15,5 +15,6 @@
 <Database>
 	<InterfaceModes>
 		<Row InterfaceModeType="INTERFACEMODE_LCP_CLAIM_TILE" ViewName="Placement"/>
+		<Row InterfaceModeType="INTERFACEMODE_LCP_PAINT_TILE" ViewName="Placement"/>
 	</InterfaceModes>
 </Database>

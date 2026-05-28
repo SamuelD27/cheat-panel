@@ -13,9 +13,11 @@ import { Panel, FocusManager, DialogBoxManager, DialogBoxAction } from '/base-st
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
 import { renderCityList } from '/base-standard/ui/cheat-panel/tab-cities.js';
+import { renderMapTab } from '/base-standard/ui/cheat-panel/tab-map.js';
 import { ensureListeners, isGlobalInfinite, toggleGlobalInfinite } from '/base-standard/ui/cheat-panel/shared/infinite-move.js';
-// Side-effect import: registers the custom INTERFACEMODE_LCP_CLAIM_TILE handler (M4.3 "Claim Tiles").
-import '/base-standard/ui/cheat-panel/claim-tile-mode.js';
+// Side-effect imports: each registers its custom INTERFACEMODE_LCP_* handler at module load.
+import '/base-standard/ui/cheat-panel/claim-tile-mode.js'; // M4.3 "Claim Tiles"
+import '/base-standard/ui/cheat-panel/paint-tile-mode.js'; // M5 "Map Paint"
 
 const InputEngineEventName = 'engine-input';
 
@@ -236,6 +238,9 @@ class ScreenCheatPanel extends Panel {
         if (refreshCitiesBtn) refreshCitiesBtn.addEventListener("action-activate", () => this.refreshCityList());
         this.refreshCityList();
 
+        this.mapContentEl = this.Root.querySelector(".cheat-map-content");
+        this.refreshMapTab();
+
         this.infMoveBtn = this.Root.querySelector(".cheat-inf-move");
         if (this.infMoveBtn) {
             this.updateInfMoveBtn();
@@ -272,6 +277,7 @@ class ScreenCheatPanel extends Panel {
         });
         if (id === 'units') this.refreshUnitList();
         if (id === 'cities') this.refreshCityList();
+        if (id === 'map') this.refreshMapTab();
     }
 
     refreshUnitList() {
@@ -290,6 +296,11 @@ class ScreenCheatPanel extends Panel {
             refresh: () => this.refreshCityList(),
             closePanel: () => this.close(),
         });
+    }
+
+    refreshMapTab() {
+        if (!this.mapContentEl) return;
+        renderMapTab(this.mapContentEl, { closePanel: () => this.close() });
     }
 
     updateInfMoveBtn() {
