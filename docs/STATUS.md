@@ -22,7 +22,7 @@ sub-system dock.
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
 | **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
 | **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
-| **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | 🟡 **implemented & deployed (modinfo + new XML → needs RESTART), NOT yet verified** | _pending_ |
+| **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | 🟡 **implemented & deployed (modinfo + new XML → needs RESTART), NOT yet verified** | `10968eb` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
