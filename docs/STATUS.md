@@ -24,9 +24,71 @@ sub-system dock.
 | **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
 | **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | ✅ **verified 2026-05-28** (claim works, including beyond 3 rings) | `10968eb` |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot via `WorldBuilder.MapPlots.set*` + custom `INTERFACEMODE_LCP_PAINT_TILE` (mode stays active across clicks; Esc/right-click exits) | 🟡 **implemented & deployed (new files + modinfo + DB → needs RESTART), NOT yet verified** | `ddbf01b` |
+| **M5.1** | Panel restyle (light touch): flat fills (no gradients), bronze-dimmed gold, thinner less-yellow borders, less-rounded corners, darker row backgrounds. CSS-only override scoped to `.cheat-frame`; structural `fxs-*` components untouched | 🟡 **implemented (JS-only, no DB/modinfo change), NOT yet verified** | _pending_ |
+| **M5.2** | In-panel **Map Preview** minimap: read-only canvas rendering of the full map (terrain + biome tint + hills + mountain + rivers + natural wonders). Filter toggles: Cities, Resources. Pure `GameplayMap.*` reads — does NOT touch fog-of-war or grant in-game vision | 🟡 **implemented (JS-only, no DB/modinfo change), NOT yet verified** | _pending_ |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART and verify M5 "Map Paint"
+## ▶ Immediate next action: RESTART once, verify M5 + M5.1 + M5.2 together
+
+(Since all three landed before the restart, one restart covers them. M5 alone forces the restart — M5.1
+and M5.2 are JS-only and would otherwise be Reload-UI-only.)
+
+### M5.1 — Panel restyle (light touch)
+CSS-only override in `injectPanelStyles()` (`cheat-panel.js`): gradient buttons → flat fills;
+gold tone darkened from `#e8c860` toward `#c5a042` (bronze); borders thinner and less yellow
+(`#5a481c`); corners less rounded; row backgrounds darker. Active state changes from gold-green
+gradient to flat teal-green (`#4a9970`). The structural `fxs-*` components (subsystem-frame,
+header, tab-bar) and the parchment backdrop are untouched, so drag / tabs / close / open animation
+all keep working. A new `.lcp-section` style is added for the M5.2 section dividers.
+
+**Test:** the panel should look noticeably flatter and less ornate but still gold/bronze themed.
+Confirm drag still works (grab the header), tab switches still work, F8/dock skull still opens.
+
+### M5.2 — In-panel Map Preview minimap (with filters)
+New section at the **top of the Map tab** ("── Map Preview ──"), above the paint controls. A canvas
+renders the full map from a one-pass `api.getMapSnapshot()` that calls only read-only
+`GameplayMap.*` APIs (no fog/visibility mutation, no save-state changes, **no in-game vision granted**):
+- Terrain colors: ocean (deep blue), coast (mid blue), navigable river (lighter blue), mountain (grey),
+  land tiles tinted by biome (grassland/plains/tropical/desert/tundra), hills darken the biome tint by ~28%.
+- **Rivers**: thin bottom-edge stripe per plot — light blue for `RIVER_MINOR`, deeper blue for
+  `RIVER_NAVIGABLE` (per `RiverTypes` from base `ui-next/tooltips/plot-tooltip/helpers.js`).
+- **Natural wonders**: gold center pip (`GameplayMap.isNaturalWonder`).
+- **Cities** (filter checkbox; default ON): square in the civ's primary color
+  (`UI.Color.getPlayerColors(pid).primaryColor`), white outline if capital, black otherwise.
+- **Resources** (filter checkbox; default OFF): center dot colored by `ResourceClassType` —
+  strategic (red), luxury (purple), bonus (green), treasure (gold), factory (orange).
+
+Tile size auto-scales to the panel width (min 2px, ~4px on standard maps). Y axis is flipped so plot
+y=0 is at the bottom (Civ minimap orientation); odd rows are offset by half a tile (hex). Snapshot is
+cached at module level — toggling filters is instant; **[Refresh]** invalidates the cache and re-reads
+the map. A short legend under the canvas labels the markers; a status line shows
+`<W>×<H> map · N cities · M resources`.
+
+**Test plan after restart** (run all three in sequence):
+1. Open the panel (dock skull). Glance over the whole UI — does it look flatter and less ornate (M5.1
+   restyle)? Tabs / drag / close should still work normally.
+2. Switch to **Map** tab. Wait ~50–100ms for "Reading map…" → canvas paints (M5.2).
+   - Land/sea/mountain shapes should match the actual map. Rivers visible as thin blue stripes; natural
+     wonders show as gold pips. Cities visible by default in civ colors.
+   - Toggle **Cities** off / on — city dots appear and disappear instantly.
+   - Toggle **Resources** on — strategic/luxury/bonus dots appear. Toggle off to hide.
+   - Click **[Refresh]** — should re-read and redraw (useful after painting changes or new turn).
+3. Below the preview, the existing **── Map Paint ──** section is the M5 paint UI (Terrain / Feature /
+   Resource / Biome → pick a type → [Paint at clicked tile]). Test it per the original M5 plan:
+   - Pick a category, pick a type, click [Paint], click a plot — terrain should change (may need a
+     camera move or end-turn to redraw visually).
+   - Esc/right-click exits cleanly. UI.log filter `LCP:` should show `LCP: paint <Cat> <TYPE> at (x,y)`.
+
+**Open ❓ to confirm in-game (M5.2-specific):**
+- Y orientation: if the minimap looks vertically flipped vs the actual map, I had a wrong assumption
+  about plot-Y origin and will flip it (one-line change).
+- Civ color brightness: `UI.Color.getPlayerColors(pid).primaryColor` returns normalized 0..1 floats per
+  the base trade-route-chooser. If colors look black, that assumption is wrong and the values are
+  already 0..255 — also a one-line change.
+- Performance: the snapshot is ~6k plots iterated. Should be sub-100ms; if "Reading map…" hangs more
+  than a second, report and I'll chunk it.
+
+
 
 ### M5 — Map tab: paint terrain/feature/resource/biome on a clicked plot
 New 5th tab **Map** between Cities and Research. Layout:

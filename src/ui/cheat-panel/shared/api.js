@@ -416,6 +416,115 @@ export function enterPaintMode({ category, typeString }, opts = {}) {
     } catch (e) { ERR('enterPaintMode failed:', e); return false; }
 }
 
+// ─── MAP PREVIEW (M5.2) ───────────────────────────────────────────────
+// Read-only minimap data: terrain/biome/river/natural-wonder per plot, plus optional cities and
+// resources. This is PURELY READS via GameplayMap.* — it does NOT touch fog-of-war / Visibility, does
+// NOT mutate save state, and grants NO in-game vision. The intended use is the in-panel "Map Preview"
+// canvas so the player can plan placement without actually revealing the map.
+//
+// All APIs used here are verified in the base UI:
+//   GameplayMap.getGridWidth/getGridHeight     — base ui/unit-flags/unit-flag-manager.js
+//   GameplayMap.getTerrainType/getBiomeType    — ditto
+//   GameplayMap.getFeatureType/getResourceType — base ui/lenses/layer/resource-layer.js
+//   GameplayMap.getRiverType                   — base ui-next/tooltips/plot-tooltip/helpers.js (RiverTypes.NO_RIVER / RIVER_MINOR / RIVER_NAVIGABLE)
+//   GameplayMap.isNaturalWonder                — base ui/lenses/layer/continent-layer.js
+//   GameplayMap.isMountain / isWater           — used elsewhere in this api.js
+//   UI.Color.getPlayerColors(pid)?.primaryColor — base ui/trade-route-chooser/trade-route-chooser.js
+//   Players.getAlive()                         — base ui/action/panel-action.js
+export function getMapDimensions() {
+    try { return { width: GameplayMap.getGridWidth(), height: GameplayMap.getGridHeight() }; }
+    catch (e) { ERR('getMapDimensions failed:', e); return { width: 0, height: 0 }; }
+}
+
+// Single-pass snapshot of the entire map. Returns:
+//   {
+//     width, height,
+//     plots: [{terr, biome, water, mountain, hills, river, nw, hasResource}] indexed by (y*width + x)
+//     cities: [{x, y, name, color, isCapital, ownerID}]
+//     resources: [{x, y, cls}] where cls is the ResourceClassType string
+//   }
+// Iterating ~6000 plots takes well under 100ms; cached at the call site so tab re-renders are free.
+export function getMapSnapshot(opts = {}) {
+    const includeCities    = opts.includeCities    !== false;
+    const includeResources = opts.includeResources !== false;
+    const { width: W, height: H } = getMapDimensions();
+    if (!W || !H) return { width: 0, height: 0, plots: null, cities: [], resources: [] };
+
+    // Cache hash -> name lookups across the iteration so we hit GameInfo at most once per unique value.
+    const terrainCache = Object.create(null);
+    const biomeCache   = Object.create(null);
+    const resolveTerrain = (h) => {
+        if (h in terrainCache) return terrainCache[h];
+        let name = null; try { name = GameInfo?.Terrains?.lookup?.(h)?.TerrainType || null; } catch (_) {}
+        return (terrainCache[h] = name);
+    };
+    const resolveBiome = (h) => {
+        if (h in biomeCache) return biomeCache[h];
+        let name = null; try { name = GameInfo?.Biomes?.lookup?.(h)?.BiomeType || null; } catch (_) {}
+        return (biomeCache[h] = name);
+    };
+
+    const noResource = (typeof ResourceTypes !== 'undefined' && ResourceTypes.NO_RESOURCE !== undefined) ? ResourceTypes.NO_RESOURCE : -1;
+
+    const plots = new Array(W * H);
+    const resources = [];
+
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const i = y * W + x;
+            let terr = '', biome = '', water = false, mountain = false, hills = false, river = 0, nw = false, hasResource = false;
+            try { terr     = resolveTerrain(GameplayMap.getTerrainType(x, y)) || ''; } catch (_) {}
+            try { biome    = resolveBiome(GameplayMap.getBiomeType(x, y))     || ''; } catch (_) {}
+            try { water    = !!GameplayMap.isWater(x, y); } catch (_) {}
+            try { mountain = !!GameplayMap.isMountain(x, y); } catch (_) {}
+            try { river    = GameplayMap.getRiverType(x, y) | 0; } catch (_) {}
+            try { nw       = !!GameplayMap.isNaturalWonder(x, y); } catch (_) {}
+            hills = (terr === 'TERRAIN_HILL'); // TERRAIN_HILL is land + elevated, see base data
+
+            if (includeResources) {
+                let r = -1;
+                try { r = GameplayMap.getResourceType(x, y); } catch (_) {}
+                if (r !== noResource && r !== -1 && r !== 0) {
+                    hasResource = true;
+                    let cls = '';
+                    try { cls = GameInfo?.Resources?.lookup?.(r)?.ResourceClassType || ''; } catch (_) {}
+                    resources.push({ x, y, cls });
+                }
+            }
+            plots[i] = { terr, biome, water, mountain, hills, river, nw, hasResource };
+        }
+    }
+
+    const cities = [];
+    if (includeCities) {
+        try {
+            const alive = (typeof Players !== 'undefined' && Players.getAlive) ? Players.getAlive() : [];
+            for (const p of alive) {
+                if (!p || !p.Cities || typeof p.Cities.getCities !== 'function') continue;
+                let color = null;
+                try {
+                    const pc = UI?.Color?.getPlayerColors?.(p.id);
+                    if (pc?.primaryColor) {
+                        const c = pc.primaryColor;
+                        // primaryColor is normalized 0..1 (verified vs base trade-route-chooser)
+                        color = 'rgb(' + Math.round((c.r || 0) * 255) + ',' + Math.round((c.g || 0) * 255) + ',' + Math.round((c.b || 0) * 255) + ')';
+                    }
+                } catch (_) {}
+                for (const c of p.Cities.getCities()) {
+                    try {
+                        if (!c?.location) continue;
+                        let name = '(city)';
+                        try { if (c.name) name = Locale.compose(c.name); } catch (_) {}
+                        cities.push({ x: c.location.x, y: c.location.y, name, color, isCapital: !!c.isCapital, ownerID: p.id });
+                    } catch (_) {}
+                }
+            }
+        } catch (e) { ERR('getMapSnapshot cities failed:', e); }
+    }
+
+    return { width: W, height: H, plots, cities, resources };
+}
+
 // ─── RESEARCH / CIVIC ─────────────────────────────────────────────────
 // Completion is done by overflowing the relevant yield (the verified Sovereign approach) — there is
 // no direct setResearchProgress on this build.
