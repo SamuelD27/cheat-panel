@@ -39,6 +39,12 @@
 				     binding therefore lives ONLY in the shell-scope group above; in-game, open the
 				     panel with the dock skull button. (Regression introduced in M4.1 / bdafc56,
 				     reverted here. A correct in-game F8 needs a JS-level approach, tracked separately.) -->
+				<UpdateDatabase>
+					<!-- Registers INTERFACEMODE_LCP_CLAIM_TILE in the gameplay InterfaceModes table so
+					     InterfaceMode.switchTo accepts it. InterfaceModes IS a gameplay-scope table
+					     (base-standard/data/interface-modes.xml loads in game scope), so this is safe. -->
+					<Item>database/interface-modes.xml</Item>
+				</UpdateDatabase>
 				<UpdateText>
 					<Item>text/Cheat-Panel-Text.sql</Item>
 				</UpdateText>

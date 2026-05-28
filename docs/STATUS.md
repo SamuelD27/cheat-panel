@@ -1,6 +1,6 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-05-27. Read this first to resume work._
+_Last updated: 2026-05-28. Read this first to resume work._
 
 ## What this is
 A **private, single-player** Civilization VII cheat/sandbox panel mod, built as a private fork of the
@@ -21,11 +21,32 @@ sub-system dock.
 | **M4.1-fix** | Revert game-scope `input.xml` registration (it broke loading ALL saves) | ✅ **verified 2026-05-27** (save loads again) | `061ccde` |
 | **M4.2** | Cities tab: per-row [Grow] → native tile picker, claim adjacent tiles (claim-only) | ✅ claim works (verified) — but EXPAND is **gated on a pending growth** (1 claim per natural growth) | `45e7378` |
 | **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
-| **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | 🟡 **implemented & deployed (NEW FILE → needs RESTART), NOT yet verified** | `74adfa2` |
+| **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
+| **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | 🟡 **implemented & deployed (modinfo + new XML → needs RESTART), NOT yet verified** | _pending_ |
 | **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot | ⬜ pending | — |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART and verify M4.3 "Claim Tiles"
+## ▶ Immediate next action: RESTART and verify M4.3-fix "Claim Tiles" (DB registration)
+
+### 🛑 M4.3 first-attempt issue & fix (2026-05-28)
+**Symptom (reported in-game):** clicking **[Claim]** opened the plot picker (UI/camera switched), but **no
+plots were selectable** — same dead-end UX as the M4.2 "no pending growth" soft-lock.
+**Root cause (confirmed in `UI.log`):** the engine logged repeatedly
+`Interface Mode 'INTERFACEMODE_LCP_CLAIM_TILE' not defined in Database.` Registering a JS handler via
+`InterfaceMode.addHandler` is **not** sufficient — `InterfaceMode.switchTo` also requires a matching row
+in the gameplay `InterfaceModes` table. Without it the engine partially enters the mode (view switches)
+but never delivers plot input to our handler, so `proposePlot` is never called.
+**Fix (file added + modinfo changed → FULL RESTART required):**
+- New `src/database/interface-modes.xml` adds `<Row InterfaceModeType="INTERFACEMODE_LCP_CLAIM_TILE"
+  ViewName="Placement"/>` (`Placement` matches every other `ChoosePlotInterfaceMode` subclass —
+  ACQUIRE_TILE, DIPLO_CLAIM_PLOT, PLACE_BUILDING).
+- Registered as `<UpdateDatabase><Item>database/interface-modes.xml</Item></UpdateDatabase>` in the
+  **game-scope** ActionGroup. _Safety check (re: M4.1 regression):_ `InterfaceModes` **is** a gameplay
+  table (loaded from `base-standard/data/interface-modes.xml` in game scope), unlike `input.xml` which
+  is shell-only — so a game-scope `<UpdateDatabase>` is correct here and won't break save loading.
+_Engine lesson:_ interface modes are dual-registered — XML defines the type+ViewName, JS provides the
+handler. Both are required; missing either yields the silent "picker opens but nothing's clickable"
+failure.
 
 ### M4.3 — [Claim]: add any plot to a city, no radius/growth limit (scope chosen by user: claim-only)
 New per-row **[Claim]** button → `api.enterClaimMode(city)` → custom `INTERFACEMODE_LCP_CLAIM_TILE`

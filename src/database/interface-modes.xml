@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Register our custom map-click interface mode so InterfaceMode.switchTo accepts it.
+  Without this row, the engine logs "Interface Mode 'INTERFACEMODE_LCP_CLAIM_TILE'
+  not defined in Database" and the picker opens but no plots are selectable.
+
+  ViewName="Placement" matches every other ChoosePlotInterfaceMode subclass
+  (INTERFACEMODE_ACQUIRE_TILE, INTERFACEMODE_DIPLO_CLAIM_PLOT, INTERFACEMODE_PLACE_BUILDING),
+  which is the camera/input view we want for free plot picking.
+
+  InterfaceModes is a gameplay-scope table (loaded from base-standard/data/interface-modes.xml),
+  so registering this file in the game-scope ActionGroup is safe — unlike input.xml, which is
+  shell-only and broke save loading when added in game scope (see M4.1-fix).
+-->
+<Database>
+	<InterfaceModes>
+		<Row InterfaceModeType="INTERFACEMODE_LCP_CLAIM_TILE" ViewName="Placement"/>
+	</InterfaceModes>
+</Database>
