@@ -23,7 +23,7 @@ sub-system dock.
 | **M4.2-fix** | Guard [Grow]: don't enter the picker with 0 claimable plots (was soft-locking the player); show an inline hint instead | ✅ **verified 2026-05-27** (works; growth- & radius-gated) | `8995e65` |
 | **M4.3** | Cities tab: per-row **[Claim]** → custom map-click mode (`INTERFACEMODE_LCP_CLAIM_TILE`) to add ANY plot to the city via `city.purchasePlot`, no radius/growth limit | ⚠ first attempt opened the picker but no plots were selectable (engine: _"Interface Mode '…' not defined in Database"_); see M4.3-fix | `74adfa2` |
 | **M4.3-fix** | Register `INTERFACEMODE_LCP_CLAIM_TILE` in the gameplay `InterfaceModes` table (`database/interface-modes.xml`, game-scope `<UpdateDatabase>`); `InterfaceMode.switchTo` rejects modes not present in DB even when a JS handler is registered | ✅ **verified 2026-05-28** (claim works, including beyond 3 rings) | `10968eb` |
-| **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot via `WorldBuilder.MapPlots.set*` + custom `INTERFACEMODE_LCP_PAINT_TILE` (mode stays active across clicks; Esc/right-click exits) | 🟡 **implemented & deployed (new files + modinfo + DB → needs RESTART), NOT yet verified** | _pending_ |
+| **M5** | Map tab: paint terrain/feature/resource/biome on a clicked plot via `WorldBuilder.MapPlots.set*` + custom `INTERFACEMODE_LCP_PAINT_TILE` (mode stays active across clicks; Esc/right-click exits) | 🟡 **implemented & deployed (new files + modinfo + DB → needs RESTART), NOT yet verified** | `ddbf01b` |
 | **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
 ## ▶ Immediate next action: RESTART and verify M5 "Map Paint"
