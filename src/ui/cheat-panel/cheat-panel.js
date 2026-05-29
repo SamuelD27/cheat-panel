@@ -333,8 +333,31 @@ class ScreenCheatPanel extends Panel {
         }
 
         this.setupDragging();
+        this.centerPanel();
 
         FocusManager.get().setFocus(this.Root);
+    }
+
+    /**
+     * Center the panel horizontally on open. The base panel root ships with the utility class
+     * `left-0` (pinned to the screen's left edge), which looked lopsided once the frame was widened
+     * to ~3× — empty space banked up on the right. We measure the laid-out width (so it's correct at
+     * any rem size / resolution) one frame after attach, then set an explicit px `left`. Dragging
+     * continues seamlessly from there because onDown reads getBoundingClientRect().left as its origin.
+     */
+    centerPanel() {
+        const center = () => {
+            try {
+                const w  = this.Root.getBoundingClientRect().width;
+                const vw = window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 0;
+                if (w > 0 && vw > 0) {
+                    this.Root.style.left  = Math.max(0, Math.round((vw - w) / 2)) + 'px';
+                    this.Root.style.right = 'auto';
+                }
+            } catch (_) {}
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(center);
+        else setTimeout(center, 0);
     }
 
     onDetach() {
