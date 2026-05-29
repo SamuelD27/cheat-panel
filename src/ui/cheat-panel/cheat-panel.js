@@ -109,7 +109,7 @@ class ScreenCheatPanel extends Panel {
                fixed box and the content area scrolls internally, so every tab is the same size. */
             .cheat-frame {
                 display: flex !important; flex-direction: column !important;
-                width: 26rem !important; height: 42rem !important;
+                width: 78rem !important; max-width: 96vw !important; height: 42rem !important;
                 background-color: #14110b !important;
                 border: 1px solid #6e5a28 !important;
                 border-radius: 0.45rem !important;
