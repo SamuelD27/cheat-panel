@@ -33,6 +33,20 @@ sub-system dock.
 | **M6-restyle** | Full **dark + gold** reskin of the WHOLE panel (strips Sovereign parchment/9-slice/filigree; re-skins engine `fxs-button`/`fxs-tab-bar`/`fxs-header`; locks the frame to a fixed 26×42rem so it stops resizing between tabs, content scrolls internally). **Root-cause fix:** the panel runs in a *separate Gameface document*, so the `<style>` was being appended to the wrong `document.head` and never applied — now appended into `this.Root.ownerDocument`. This is why **every prior restyle "didn't show up"** | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `74e2562` |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
+## ▶ Latest in-game feedback (2026-05-29) — restyle good; width + paint-exit fixes
+
+- ✅ **Restyle approved** ("style is good, keep it"). Panel now opens (the `4424a2a` backtick fix).
+- **Width too narrow → fixed (`953c319`):** locked width `26rem` → `78rem` (~3×), `max-width:96vw` guard.
+- **Paint mode "trapped" → fixed (this commit):** user entered the Map-tab **paint** picker (clicked the
+  **Feature** category, not a filter), painted tiles (green flash = `api.paintPlot` succeeded), but felt
+  trapped. Confirmed via Q: **Esc/right-click DOES exit** (same `ChoosePlotInterfaceMode` base as the
+  verified Claim mode) — they just **didn't know how to exit** (no on-screen cue). Fix: `paint-tile-mode.js`
+  now shows a fixed top-center **hint banner** while painting ("🖌 PAINT MODE — Cat = TYPE · Click tiles ·
+  Esc or right-click to exit · terrain redraws after camera move / next turn"), created in `decorate()`,
+  removed in `undecorate()`, `pointer-events:none` so it never eats map clicks. _The paint itself works;
+  the terrain just doesn't visibly redraw until a camera-pan/end-turn — engine limitation, now stated in
+  the banner._
+
 ## ▶ Immediate next action: Reload UI, verify M6-restyle + M5.x-fix2
 
 JS-only (`cheat-panel.js`, `api.js`, `tab-map.js`) — no `.modinfo` / database / new files.
