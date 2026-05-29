@@ -204,7 +204,7 @@ class ScreenCheatPanel extends Panel {
                core/ui/components/fxs-button.js): the gold 9-slice texture lives on stacked
                .fxs-button__bg--{base,focus,active,disabled} layers. We null those background IMAGES
                and paint flat dark fills with a gold edge + gold label, so the engine buttons match
-               our plain DOM buttons. (A `filter: brightness` alone couldn't recolor the gold texture
+               our plain DOM buttons. (A 'filter: brightness' alone couldn't recolor the gold texture
                — that's why every earlier "dim it" attempt didn't visibly change the buttons.) */
             .cheat-frame fxs-button {
                 color: #d8b24a !important;
