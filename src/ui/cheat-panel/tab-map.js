@@ -2,20 +2,24 @@
  * @file tab-map.js
  * @description Map tab — two sections:
  *
- *   1) Map Preview (M5.2) — read-only minimap drawn to a canvas using api.getMapSnapshot().
+ *   1) Map Preview (M5.2 + M7) — read-only minimap drawn to a canvas using api.getMapSnapshot().
  *      Pure reads from GameplayMap.* — does NOT touch fog-of-war / visibility, does NOT grant any
- *      in-game vision, can't affect save state. Default render: terrain colors (biome-tinted), with
- *      rivers and natural wonders overlaid. Toggle-button filters (Cities / Resources / My Units)
- *      switch overlays at draw time without re-snapshotting. Zoom +/- buttons change the tile size
- *      (the canvas overflows its scroll-wrap on large maps; you scroll inside the wrap).
+ *      in-game vision, can't affect save state. It deliberately reads the WHOLE map regardless of
+ *      fog, so it doubles as a "see the hidden map without discovering it" view.
+ *
+ *      M7 additions:
+ *        - Feature shading (forest/jungle/reef/ice/…) on top of the biome tint; bigger default zoom.
+ *        - Hover tooltip: shows terrain/biome/feature/resource/coords for the plot under the cursor.
+ *        - Click-to-pan: clicking a plot pans the real game camera there (api.lookAtPlot, read-only).
+ *        - Spotlight filter: multi-select the resources / natural wonders present on the map; when any
+ *          are selected, every non-matching plot is dimmed so the matches "pop". Pure canvas overlay —
+ *          no engine calls, no vision granted.
  *
  *      Native <input type="checkbox"> is avoided on purpose: Coherent Gameface renders it weirdly in
- *      this build (clicking the checkbox widened the panel and added a black band on the canvas
- *      side). Toggle buttons (.lcp-row-btn + .active) layout cleanly and the click events fire
- *      reliably.
+ *      this build. All toggles are custom buttons (.lcp-row-btn + .active).
  *
- *   2) Map Paint (M5) — pick category + type → [Paint at clicked tile] enters
- *      INTERFACEMODE_LCP_PAINT_TILE. Mode stays active across clicks; Esc / right-click exits.
+ *   2) Map Paint (M5) — ON STANDBY (see docs/Minor_todos.md #3). UI remains but development is paused:
+ *      known issues are the exit trap (can't leave paint mode) and feature-placement rejections.
  *
  * Module-level _state keeps selection/filters/zoom across tab switches in a single session.
  */
@@ -27,7 +31,8 @@ const _state = {
     category: 'Terrain',
     type: null,
     filters: { cities: true, resources: false, myUnits: true },
-    zoom: 8,        // pixels per tile; user adjusts with +/- buttons (clamped to [2, 20])
+    spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
+    zoom: 10,               // pixels per tile; +/- buttons clamp to [2, 24]
 };
 let _snapshotCache = null;
 let _snapshotInFlight = false;
@@ -46,17 +51,56 @@ const OCEAN = '#1a3358', COAST = '#3a7ab0', NAV_RIVER = '#4a90d0', MOUNTAIN = '#
 const NW_FILL = '#fcd040';
 const RIVER_MINOR = '#7ec8e3', RIVER_NAV = '#4a90d0';
 
+// Feature shading — matched by substring so it survives the various exact FeatureType spellings.
+// [r,g,b, alpha] : the feature color is blended over the biome base at the given alpha.
+const FEATURE_TINTS = [
+    [['RAINFOREST', 'JUNGLE'],            [ 28,  92,  44, 0.62]],
+    [['FOREST', 'WOODLAND', 'TAIGA'],     [ 34, 78,  40, 0.55]],
+    [['MARSH', 'MANGROVE', 'SWAMP'],      [ 60,  74,  46, 0.6]],
+    [['OASIS'],                           [ 60, 170,  90, 0.7]],
+    [['REEF'],                            [ 40, 160, 160, 0.6]],
+    [['ICE', 'SNOW'],                     [225, 235, 245, 0.7]],
+    [['VOLCANO'],                         [110,  40,  30, 0.7]],
+    [['SAVANNA', 'GRASSLAND_PLAINS'],     [150, 140,  60, 0.4]],
+];
+function featureTint(feat) {
+    if (!feat) return null;
+    for (const [keys, rgba] of FEATURE_TINTS) {
+        for (const k of keys) if (feat.indexOf(k) !== -1) return rgba;
+    }
+    return null;
+}
+function blend(base, rgba) {
+    const a = rgba[3];
+    return [
+        Math.round(base[0] * (1 - a) + rgba[0] * a),
+        Math.round(base[1] * (1 - a) + rgba[1] * a),
+        Math.round(base[2] * (1 - a) + rgba[2] * a),
+    ];
+}
+
 function colorForPlot(p) {
     if (!p) return '#000';
     if (p.water) {
-        if (p.terr === 'TERRAIN_OCEAN') return OCEAN;
-        if (p.terr === 'TERRAIN_COAST') return COAST;
-        if (p.terr === 'TERRAIN_NAVIGABLE_RIVER') return NAV_RIVER;
-        return '#2a5080';
+        let c = '#2a5080';
+        if (p.terr === 'TERRAIN_OCEAN') c = OCEAN;
+        else if (p.terr === 'TERRAIN_COAST') c = COAST;
+        else if (p.terr === 'TERRAIN_NAVIGABLE_RIVER') c = NAV_RIVER;
+        // Reef/ice can sit on water tiles — let the feature tint show.
+        const t = featureTint(p.feat);
+        if (t) {
+            const m = (s) => parseInt(s, 16);
+            const base = [m(c.slice(1,3)), m(c.slice(3,5)), m(c.slice(5,7))];
+            const b = blend(base, t);
+            return 'rgb(' + b[0] + ',' + b[1] + ',' + b[2] + ')';
+        }
+        return c;
     }
     if (p.mountain) return MOUNTAIN;
     let base = BIOME_RGB[p.biome] || DEFAULT_LAND_RGB;
     if (p.hills) base = [Math.round(base[0]*0.72), Math.round(base[1]*0.72), Math.round(base[2]*0.72)];
+    const t = featureTint(p.feat);
+    if (t) base = blend(base, t);
     return 'rgb(' + base[0] + ',' + base[1] + ',' + base[2] + ')';
 }
 
@@ -71,24 +115,49 @@ function colorForResource(cls) {
     }
 }
 
-/**
- * Paint the snapshot onto the canvas at the current zoom.
- * Y axis is flipped (canvas y=0 at top, plot y=0 at bottom — Civ minimap orientation).
- * Hex offset: odd rows shifted right by half a tile.
- */
-function drawMinimap(canvas, snap, filters, tileSize) {
+// Forward plot→pixel mapping (Y flipped so plot y=0 is at the bottom; odd rows offset half a tile).
+function plotToPx(x, y, H, tileSize) {
+    return { px: x * tileSize + (y % 2 === 1 ? tileSize / 2 : 0), py: (H - 1 - y) * tileSize };
+}
+// Inverse pixel→plot for hover/click. Approximate (ignores hex slant within a cell) but fine for UI.
+function pxToPlot(cx, cy, W, H, tileSize) {
+    let y = H - 1 - Math.floor(cy / tileSize);
+    if (y < 0 || y >= H) return null;
+    const x = Math.floor((cx - (y % 2 === 1 ? tileSize / 2 : 0)) / tileSize);
+    if (x < 0 || x >= W) return null;
+    return { x, y };
+}
+
+/** Build the set of plot indices matching the active spotlight filters (or null if none active). */
+function computeMatchSet(snap, spotlight) {
+    if (!spotlight || spotlight.size === 0) return null;
+    const W = snap.width;
+    const set = new Set();
+    if (snap.resources) {
+        for (const r of snap.resources) if (r.type && spotlight.has('res:' + r.type)) set.add(r.y * W + r.x);
+    }
+    if (snap.plots) {
+        for (let i = 0; i < snap.plots.length; i++) {
+            const p = snap.plots[i];
+            if (p && p.nw && p.feat && spotlight.has('nw:' + p.feat)) set.add(i);
+        }
+    }
+    return set;
+}
+
+/** Paint the snapshot onto the canvas at the current zoom + filters + spotlight. */
+function drawMinimap(canvas, snap, opts) {
     if (!snap || !snap.width || !snap.height) return;
     const W = snap.width, H = snap.height;
+    const tileSize = opts.tileSize;
+    const filters = opts.filters;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     canvas.width  = Math.ceil(W * tileSize + tileSize / 2);
     canvas.height = H * tileSize;
-
-    // Pin the CSS *display* size to the buffer size. Without this, the canvas (a replaced element
-    // with an intrinsic size) gets clamped to the wrap's `max-width:100%` and drawn SCALED DOWN —
-    // that was the "minimap too small / bunch of pixels" report. With the display size pinned and
-    // maxWidth defeated, an oversized canvas overflows and the wrap's `overflow:auto` scrolls it.
+    // Pin the CSS display size to the buffer size so the canvas is NOT scaled down by the wrap's
+    // max-width:100% (that was the old "too small / bunch of pixels" bug). Oversized → wrap scrolls it.
     canvas.style.width    = canvas.width + 'px';
     canvas.style.height   = canvas.height + 'px';
     canvas.style.maxWidth = 'none';
@@ -97,14 +166,14 @@ function drawMinimap(canvas, snap, filters, tileSize) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    const matchSet = computeMatchSet(snap, opts.spotlight);
+
     // Plots
     for (let y = 0; y < H; y++) {
-        const yOdd = y % 2 === 1;
         for (let x = 0; x < W; x++) {
             const p = snap.plots[y * W + x];
             if (!p) continue;
-            const px = x * tileSize + (yOdd ? tileSize / 2 : 0);
-            const py = (H - 1 - y) * tileSize;
+            const { px, py } = plotToPx(x, y, H, tileSize);
             ctx.fillStyle = colorForPlot(p);
             ctx.fillRect(px, py, tileSize, tileSize);
 
@@ -122,8 +191,7 @@ function drawMinimap(canvas, snap, filters, tileSize) {
     // Resources
     if (filters.resources && snap.resources?.length) {
         for (const r of snap.resources) {
-            const px = r.x * tileSize + (r.y % 2 === 1 ? tileSize / 2 : 0);
-            const py = (H - 1 - r.y) * tileSize;
+            const { px, py } = plotToPx(r.x, r.y, H, tileSize);
             const dot = Math.max(2, Math.floor(tileSize / 2));
             ctx.fillStyle = colorForResource(r.cls);
             ctx.fillRect(px + (tileSize - dot) / 2, py + (tileSize - dot) / 2, dot, dot);
@@ -133,11 +201,9 @@ function drawMinimap(canvas, snap, filters, tileSize) {
     // Cities — square with outline, white outline for capital.
     if (filters.cities && snap.cities?.length) {
         for (const c of snap.cities) {
-            const px = c.x * tileSize + (c.y % 2 === 1 ? tileSize / 2 : 0);
-            const py = (H - 1 - c.y) * tileSize;
+            const { px, py } = plotToPx(c.x, c.y, H, tileSize);
             const size = Math.max(3, Math.floor(tileSize * 0.85));
-            const ox = px + (tileSize - size) / 2;
-            const oy = py + (tileSize - size) / 2;
+            const ox = px + (tileSize - size) / 2, oy = py + (tileSize - size) / 2;
             ctx.fillStyle   = c.color || '#fff';
             ctx.fillRect(ox, oy, size, size);
             ctx.strokeStyle = c.isCapital ? '#ffffff' : '#000000';
@@ -146,15 +212,11 @@ function drawMinimap(canvas, snap, filters, tileSize) {
         }
     }
 
-    // My units — filled triangles in the local civ's color; distinct shape from city squares so the
-    // two can sit on the same tile (settler in your capital, say) without ambiguity. Drawn LAST so
-    // they're never hidden under cities/resources.
+    // My units — filled triangles in the local civ's color (distinct from city squares; drawn last).
     if (filters.myUnits && snap.myUnits?.length) {
         for (const u of snap.myUnits) {
-            const px = u.x * tileSize + (u.y % 2 === 1 ? tileSize / 2 : 0);
-            const py = (H - 1 - u.y) * tileSize;
-            const cx = px + tileSize / 2;
-            const cy = py + tileSize / 2;
+            const { px, py } = plotToPx(u.x, u.y, H, tileSize);
+            const cx = px + tileSize / 2, cy = py + tileSize / 2;
             const r = Math.max(2, tileSize * 0.45);
             ctx.beginPath();
             ctx.moveTo(cx, cy - r);
@@ -168,7 +230,28 @@ function drawMinimap(canvas, snap, filters, tileSize) {
             ctx.stroke();
         }
     }
+
+    // Spotlight: dim every NON-matching plot so the matches pop; ring the matches in gold.
+    if (matchSet) {
+        ctx.fillStyle = 'rgba(6,5,3,0.80)';
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                if (matchSet.has(y * W + x)) continue;
+                const { px, py } = plotToPx(x, y, H, tileSize);
+                ctx.fillRect(px, py, tileSize, tileSize);
+            }
+        }
+        ctx.strokeStyle = '#ffe680';
+        ctx.lineWidth = Math.max(1, tileSize * 0.18);
+        for (const i of matchSet) {
+            const x = i % W, y = (i - x) / W;
+            const { px, py } = plotToPx(x, y, H, tileSize);
+            ctx.strokeRect(px + 0.5, py + 0.5, tileSize - 1, tileSize - 1);
+        }
+    }
 }
+
+const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s || '');
 
 /**
  * (Re)build the Map tab content inside `container`.
@@ -182,10 +265,9 @@ export function renderMapTab(container, opts = {}) {
 
     container.innerHTML = '';
 
-    // Re-read the map every time the Map tab is opened. The snapshot is module-level and was
-    // persisting across tab switches / panel reopens, so a snapshot taken before the player founded
-    // a city (or before the settler existed) left cities/myUnits empty forever — the "filters show
-    // nothing" report. A re-read is sub-100ms for ~6k plots. (↻ also still forces a re-read.)
+    // Re-read the map every time the Map tab opens — a snapshot taken before a city was founded (or
+    // before the settler existed) would otherwise leave cities/myUnits empty forever. ~6k plots is
+    // sub-100ms. (↻ also forces a re-read.)
     _snapshotCache = null;
 
     // ═══ Section 1: Map Preview ════════════════════════════════════════
@@ -194,7 +276,7 @@ export function renderMapTab(container, opts = {}) {
     previewSection.textContent = '── Map Preview ──';
     container.appendChild(previewSection);
 
-    // Toggle-button filter row (NOT native checkboxes — Gameface mishandles them in this build).
+    // Overlay-toggle filter row (Cities / Resources / Me) + zoom + refresh.
     const filterRow = document.createElement('div');
     filterRow.style.cssText = 'display:flex; align-items:center; gap:0.3rem; margin-bottom:0.3rem; flex-wrap:wrap;';
 
@@ -216,7 +298,6 @@ export function renderMapTab(container, opts = {}) {
     filterRow.appendChild(mkToggle('resources', 'Resources', 'Toggle strategic/luxury/bonus resource dots'));
     filterRow.appendChild(mkToggle('myUnits',   'Me',        'Toggle your own units (no AI visible)'));
 
-    // Zoom + Refresh group, pushed to the right.
     const zoomGroup = document.createElement('div');
     zoomGroup.style.cssText = 'display:flex; gap:0.2rem; margin-left:auto;';
     const mkZoom = (delta, label, title) => {
@@ -226,7 +307,7 @@ export function renderMapTab(container, opts = {}) {
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
-            _state.zoom = Math.max(2, Math.min(20, _state.zoom + delta));
+            _state.zoom = Math.max(2, Math.min(24, _state.zoom + delta));
             redraw();
         });
         return b;
@@ -245,18 +326,59 @@ export function renderMapTab(container, opts = {}) {
 
     container.appendChild(filterRow);
 
-    // Canvas wrap — scrolls in BOTH axes so a wide/tall canvas can't push the panel layout.
-    // NOTE: no `min-width:0` — it made the wrap shrink-to-fit and scale the canvas down. We want
-    // the canvas to keep its pinned pixel size and SCROLL inside this box instead.
+    // Canvas wrap — relative so the hover tooltip can position over it; scrolls in both axes.
     const canvasWrap = document.createElement('div');
-    canvasWrap.style.cssText = 'background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
+    canvasWrap.style.cssText = 'position:relative; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
         + 'max-width:100%; max-height:24rem; overflow:auto; '
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
-    canvas.style.cssText = 'display:block; image-rendering:pixelated;';
+    canvas.style.cssText = 'display:block; image-rendering:pixelated; cursor:crosshair;';
     canvasWrap.appendChild(canvas);
+
+    // Hover tooltip (absolutely positioned inside the wrap).
+    const tip = document.createElement('div');
+    tip.style.cssText = 'position:absolute; pointer-events:none; display:none; z-index:5; '
+        + 'background:rgba(20,17,11,0.95); border:1px solid #6e5a28; color:#e8dcc0; '
+        + 'padding:0.2rem 0.4rem; font-size:0.72rem; line-height:1.35; border-radius:0.2rem; max-width:14rem;';
+    canvasWrap.appendChild(tip);
     container.appendChild(canvasWrap);
+
+    const plotAtEvent = (e) => {
+        if (!_snapshotCache || !_snapshotCache.width) return null;
+        const rect = canvas.getBoundingClientRect();
+        return pxToPlot(e.clientX - rect.left, e.clientY - rect.top, _snapshotCache.width, _snapshotCache.height, _state.zoom);
+    };
+    canvas.addEventListener('mousemove', (e) => {
+        const loc = plotAtEvent(e);
+        if (!loc) { tip.style.display = 'none'; return; }
+        const snap = _snapshotCache;
+        const p = snap.plots[loc.y * snap.width + loc.x];
+        if (!p) { tip.style.display = 'none'; return; }
+        const res = snap.resources && snap.resources.find(r => r.x === loc.x && r.y === loc.y);
+        const parts = [];
+        parts.push('<b style="color:#d8b24a;">(' + loc.x + ', ' + loc.y + ')</b>');
+        let terrLabel = p.water ? strip(p.terr, 'TERRAIN_') : (p.mountain ? 'MOUNTAIN' : (p.hills ? 'HILLS' : strip(p.terr, 'TERRAIN_')));
+        parts.push('Terrain: ' + (terrLabel || '—').replace(/_/g, ' '));
+        if (p.biome && !p.water) parts.push('Biome: ' + strip(p.biome, 'BIOME_').replace(/_/g, ' '));
+        if (p.feat) parts.push((p.nw ? 'Wonder: ' : 'Feature: ') + (p.featName || strip(p.feat, 'FEATURE_').replace(/_/g, ' ')));
+        if (res) parts.push('Resource: <span style="color:' + colorForResource(res.cls) + ';">' + (res.name || strip(res.type, 'RESOURCE_')) + '</span>');
+        if (p.river === 1) parts.push('Minor river');
+        else if (p.river === 2) parts.push('Navigable river');
+        tip.innerHTML = parts.join('<br>');
+        tip.style.display = 'block';
+        // Position near the cursor but keep inside the wrap.
+        const wrapRect = canvasWrap.getBoundingClientRect();
+        let tx = e.clientX - wrapRect.left + 12;
+        let ty = e.clientY - wrapRect.top + 12;
+        tip.style.left = tx + 'px';
+        tip.style.top  = ty + 'px';
+    });
+    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    canvas.addEventListener('click', (e) => {
+        const loc = plotAtEvent(e);
+        if (loc) api.lookAtPlot(loc);
+    });
 
     // Legend
     const legend = document.createElement('div');
@@ -269,12 +391,117 @@ export function renderMapTab(container, opts = {}) {
         + '<span style="color:#c060d0;">■</span> Luxury &nbsp; '
         + '<span style="color:#a0e040;">■</span> Bonus &nbsp; '
         + '<span style="color:#f4d240;">■</span> Treasure<br>'
-        + '<span>■</span> City (your color, ▲ unit)';
+        + '<span>■</span> City (your color, ▲ unit) &nbsp; · &nbsp; hover = info, click = pan camera';
     container.appendChild(legend);
 
     const previewMsg = document.createElement('div');
-    previewMsg.style.cssText = 'font-size:0.78rem; color:#a89878; margin-bottom:0.5rem; min-height:1.1em;';
+    previewMsg.style.cssText = 'font-size:0.78rem; color:#a89878; margin-bottom:0.4rem; min-height:1.1em;';
     container.appendChild(previewMsg);
+
+    // ── Spotlight filter section ──
+    const spotHeader = document.createElement('div');
+    spotHeader.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin:0.2rem 0;';
+    const spotTitle = document.createElement('div');
+    spotTitle.style.cssText = 'font-size:0.74rem; color:#b89a55; letter-spacing:0.04em; text-transform:uppercase;';
+    spotTitle.textContent = 'Spotlight filter';
+    const spotClear = document.createElement('button');
+    spotClear.className = 'lcp-row-btn';
+    spotClear.style.cssText = 'flex:0 0 auto; padding:0.12rem 0.5rem; font-size:0.74rem; margin-left:auto;';
+    spotClear.textContent = 'Clear';
+    spotClear.title = 'Clear all spotlight selections';
+    spotClear.addEventListener('click', () => {
+        _state.spotlight.clear();
+        for (const b of spotListEl.querySelectorAll('button')) b.classList.remove('active');
+        redraw();
+    });
+    spotHeader.appendChild(spotTitle);
+    spotHeader.appendChild(spotClear);
+    container.appendChild(spotHeader);
+
+    const spotHint = document.createElement('div');
+    spotHint.style.cssText = 'font-size:0.68rem; color:#8a7c5c; margin-bottom:0.2rem;';
+    spotHint.textContent = 'Select resources / wonders to highlight; everything else dims.';
+    container.appendChild(spotHint);
+
+    const spotListEl = document.createElement('div');
+    spotListEl.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.25rem; max-height:11rem; overflow-y:auto; '
+        + 'padding:0.2rem; margin-bottom:0.4rem; background:rgba(0,0,0,0.3); border:1px solid rgba(120,100,55,0.25); border-radius:0.2rem;';
+    container.appendChild(spotListEl);
+
+    const buildSpotlightList = () => {
+        spotListEl.innerHTML = '';
+        const snap = _snapshotCache;
+        if (!snap || !snap.width) { return; }
+
+        // Distinct resources present (by type), with counts.
+        const resMap = new Map();   // type -> { name, cls, count }
+        for (const r of (snap.resources || [])) {
+            if (!r.type) continue;
+            const e = resMap.get(r.type) || { name: r.name || strip(r.type, 'RESOURCE_'), cls: r.cls, count: 0 };
+            e.count++; resMap.set(r.type, e);
+        }
+        // Distinct natural wonders present (by feature type).
+        const nwMap = new Map();    // feat -> { name, count }
+        for (const p of (snap.plots || [])) {
+            if (p && p.nw && p.feat) {
+                const e = nwMap.get(p.feat) || { name: p.featName || strip(p.feat, 'FEATURE_'), count: 0 };
+                e.count++; nwMap.set(p.feat, e);
+            }
+        }
+
+        const addGroupLabel = (text) => {
+            const l = document.createElement('div');
+            l.style.cssText = 'flex:1 1 100%; font-size:0.66rem; color:#9a8c6a; margin:0.15rem 0 0 0;';
+            l.textContent = text;
+            spotListEl.appendChild(l);
+        };
+        const addChip = (key, label, dotColor) => {
+            const b = document.createElement('button');
+            b.className = 'lcp-row-btn';
+            b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.12rem 0.4rem; font-size:0.72rem;';
+            b.innerHTML = (dotColor ? '<span style="color:' + dotColor + ';">■</span> ' : '') + label;
+            if (_state.spotlight.has(key)) b.classList.add('active');
+            b.addEventListener('click', () => {
+                if (_state.spotlight.has(key)) { _state.spotlight.delete(key); b.classList.remove('active'); }
+                else { _state.spotlight.add(key); b.classList.add('active'); }
+                redraw();
+            });
+            spotListEl.appendChild(b);
+        };
+
+        if (nwMap.size) {
+            addGroupLabel('Natural wonders');
+            for (const [feat, e] of [...nwMap.entries()].sort((a,b) => a[1].name.localeCompare(b[1].name))) {
+                addChip('nw:' + feat, e.name.replace(/_/g, ' '), NW_FILL);
+            }
+        }
+        if (resMap.size) {
+            addGroupLabel('Resources');
+            for (const [type, e] of [...resMap.entries()].sort((a,b) => a[1].name.localeCompare(b[1].name))) {
+                addChip('res:' + type, e.name.replace(/_/g, ' ') + ' ×' + e.count, colorForResource(e.cls));
+            }
+        }
+        if (!nwMap.size && !resMap.size) {
+            const empty = document.createElement('div');
+            empty.className = 'lcp-list-empty';
+            empty.textContent = '(no resources or wonders found on the map)';
+            spotListEl.appendChild(empty);
+        }
+    };
+
+    const setStatus = () => {
+        const snap = _snapshotCache;
+        if (!snap || !snap.width) { previewMsg.textContent = ''; return; }
+        let msg = snap.width + '×' + snap.height + ' map · '
+            + (snap.cities?.length || 0) + ' cities · '
+            + (snap.resources?.length || 0) + ' resources · '
+            + (snap.myUnits?.length || 0) + ' your units · zoom ' + _state.zoom + 'px';
+        if (_state.spotlight.size) {
+            const m = computeMatchSet(snap, _state.spotlight);
+            msg += ' · spotlight: ' + (m ? m.size : 0) + ' tiles (' + _state.spotlight.size + ' filters)';
+        }
+        previewMsg.textContent = msg;
+    };
 
     const redraw = () => {
         if (!_snapshotCache && !_snapshotInFlight) {
@@ -285,28 +512,23 @@ export function renderMapTab(container, opts = {}) {
                 catch (e) { api.ERR('getMapSnapshot failed:', e); previewMsg.textContent = 'Snapshot failed (see UI.log).'; _snapshotInFlight = false; return; }
                 _snapshotInFlight = false;
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
-                drawMinimap(canvas, _snapshotCache, _state.filters, _state.zoom);
-                previewMsg.textContent = _snapshotCache.width + '×' + _snapshotCache.height + ' map · '
-                    + (_snapshotCache.cities?.length || 0) + ' cities · '
-                    + (_snapshotCache.resources?.length || 0) + ' resources · '
-                    + (_snapshotCache.myUnits?.length || 0) + ' your units · zoom ' + _state.zoom + 'px';
+                drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+                buildSpotlightList();
+                setStatus();
             }, 0);
             return;
         }
         if (_snapshotCache) {
-            drawMinimap(canvas, _snapshotCache, _state.filters, _state.zoom);
-            previewMsg.textContent = _snapshotCache.width + '×' + _snapshotCache.height + ' map · '
-                + (_snapshotCache.cities?.length || 0) + ' cities · '
-                + (_snapshotCache.resources?.length || 0) + ' resources · '
-                + (_snapshotCache.myUnits?.length || 0) + ' your units · zoom ' + _state.zoom + 'px';
+            drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+            setStatus();
         }
     };
     redraw();
 
-    // ═══ Section 2: Map Paint ══════════════════════════════════════════
+    // ═══ Section 2: Map Paint (ON STANDBY — see docs/Minor_todos.md #3) ══
     const paintSection = document.createElement('div');
     paintSection.className = 'lcp-section';
-    paintSection.textContent = '── Map Paint ──';
+    paintSection.textContent = '── Map Paint (experimental) ──';
     container.appendChild(paintSection);
 
     const statusEl = document.createElement('div');
@@ -385,5 +607,5 @@ export function renderMapTab(container, opts = {}) {
 
     populateTypes();
     updateStatus();
-    api.LOG('rendered map tab (category=' + _state.category + ', type=' + (_state.type || '(none)') + ', zoom=' + _state.zoom + ')');
+    api.LOG('rendered map tab (category=' + _state.category + ', zoom=' + _state.zoom + ', spotlight=' + _state.spotlight.size + ')');
 }

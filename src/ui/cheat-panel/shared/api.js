@@ -431,6 +431,16 @@ export function enterPaintMode({ category, typeString }, opts = {}) {
 //   GameplayMap.isMountain / isWater           — used elsewhere in this api.js
 //   UI.Color.getPlayerColors(pid)?.primaryColor — base ui/trade-route-chooser/trade-route-chooser.js
 //   Players.getAlive()                         — base ui/action/panel-action.js
+// Pan the in-game camera to a plot (used by the minimap click-to-pan). Read-only camera move; grants
+// no vision and changes nothing. Mirrors lookAtUnit's Camera.lookAtPlot call.
+export function lookAtPlot(loc, opts = {}) {
+    try {
+        if (loc && Number.isInteger(loc.x) && Number.isInteger(loc.y) && typeof Camera !== 'undefined') {
+            Camera.lookAtPlot({ x: loc.x, y: loc.y }, { zoom: opts.zoom ?? 0.35 });
+        }
+    } catch (e) { ERR('lookAtPlot failed:', e); }
+}
+
 export function getMapDimensions() {
     try { return { width: GameplayMap.getGridWidth(), height: GameplayMap.getGridHeight() }; }
     catch (e) { ERR('getMapDimensions failed:', e); return { width: 0, height: 0 }; }
@@ -439,9 +449,11 @@ export function getMapDimensions() {
 // Single-pass snapshot of the entire map. Returns:
 //   {
 //     width, height,
-//     plots:     [{terr, biome, water, mountain, hills, river, nw, hasResource}] indexed by y*W+x
+//     plots:     [{terr, biome, water, mountain, hills, river, nw, hasResource, feat, featName}] indexed by y*W+x
+//                  feat = FeatureType string ('' if none); featName = localized feature name (on a NW
+//                  plot this IS the wonder's name, since natural wonders are features).
 //     cities:    [{x, y, name, color, isCapital, ownerID}]
-//     resources: [{x, y, cls}] where cls is the ResourceClassType string
+//     resources: [{x, y, cls, type, name}] — cls=ResourceClassType, type=ResourceType, name=localized
 //     myUnits:   [{x, y, name, kind, color}] LOCAL PLAYER ONLY (no AI / no other-player units)
 //   }
 // Iterating ~6000 plots takes well under 100ms; cached at the call site so tab re-renders are free.
@@ -454,8 +466,10 @@ export function getMapSnapshot(opts = {}) {
     if (!W || !H) return { width: 0, height: 0, plots: null, cities: [], resources: [] };
 
     // Cache hash -> name lookups across the iteration so we hit GameInfo at most once per unique value.
-    const terrainCache = Object.create(null);
-    const biomeCache   = Object.create(null);
+    const terrainCache  = Object.create(null);
+    const biomeCache    = Object.create(null);
+    const featureCache  = Object.create(null);
+    const resourceCache = Object.create(null);
     const resolveTerrain = (h) => {
         if (h in terrainCache) return terrainCache[h];
         let name = null; try { name = GameInfo?.Terrains?.lookup?.(h)?.TerrainType || null; } catch (_) {}
@@ -465,6 +479,21 @@ export function getMapSnapshot(opts = {}) {
         if (h in biomeCache) return biomeCache[h];
         let name = null; try { name = GameInfo?.Biomes?.lookup?.(h)?.BiomeType || null; } catch (_) {}
         return (biomeCache[h] = name);
+    };
+    // Feature: returns { type, name } ('' when none). Natural wonders are features, so the NW's
+    // display name is just this feature name on a plot where isNaturalWonder is true.
+    const resolveFeature = (h) => {
+        if (h in featureCache) return featureCache[h];
+        let out = { type: '', name: '' };
+        try { const row = GameInfo?.Features?.lookup?.(h); if (row?.FeatureType) out = { type: row.FeatureType, name: (() => { try { return Locale.compose(row.Name); } catch (_) { return row.FeatureType; } })() }; } catch (_) {}
+        return (featureCache[h] = out);
+    };
+    // Resource: returns { type, name, cls }.
+    const resolveResource = (h) => {
+        if (h in resourceCache) return resourceCache[h];
+        let out = { type: '', name: '', cls: '' };
+        try { const row = GameInfo?.Resources?.lookup?.(h); if (row?.ResourceType) out = { type: row.ResourceType, cls: row.ResourceClassType || '', name: (() => { try { return Locale.compose(row.Name); } catch (_) { return row.ResourceType; } })() }; } catch (_) {}
+        return (resourceCache[h] = out);
     };
 
     const noResource = (typeof ResourceTypes !== 'undefined' && ResourceTypes.NO_RESOURCE !== undefined) ? ResourceTypes.NO_RESOURCE : -1;
@@ -476,12 +505,14 @@ export function getMapSnapshot(opts = {}) {
         for (let x = 0; x < W; x++) {
             const i = y * W + x;
             let terr = '', biome = '', water = false, mountain = false, hills = false, river = 0, nw = false, hasResource = false;
+            let feat = '', featName = '';
             try { terr     = resolveTerrain(GameplayMap.getTerrainType(x, y)) || ''; } catch (_) {}
             try { biome    = resolveBiome(GameplayMap.getBiomeType(x, y))     || ''; } catch (_) {}
             try { water    = !!GameplayMap.isWater(x, y); } catch (_) {}
             try { mountain = !!GameplayMap.isMountain(x, y); } catch (_) {}
             try { river    = GameplayMap.getRiverType(x, y) | 0; } catch (_) {}
             try { nw       = !!GameplayMap.isNaturalWonder(x, y); } catch (_) {}
+            try { const fi = resolveFeature(GameplayMap.getFeatureType(x, y)); feat = fi.type; featName = fi.name; } catch (_) {}
             hills = (terr === 'TERRAIN_HILL'); // TERRAIN_HILL is land + elevated, see base data
 
             if (includeResources) {
@@ -489,12 +520,11 @@ export function getMapSnapshot(opts = {}) {
                 try { r = GameplayMap.getResourceType(x, y); } catch (_) {}
                 if (r !== noResource && r !== -1 && r !== 0) {
                     hasResource = true;
-                    let cls = '';
-                    try { cls = GameInfo?.Resources?.lookup?.(r)?.ResourceClassType || ''; } catch (_) {}
-                    resources.push({ x, y, cls });
+                    const ri = resolveResource(r);
+                    resources.push({ x, y, cls: ri.cls, type: ri.type, name: ri.name });
                 }
             }
-            plots[i] = { terr, biome, water, mountain, hills, river, nw, hasResource };
+            plots[i] = { terr, biome, water, mountain, hills, river, nw, hasResource, feat, featName };
         }
     }
 

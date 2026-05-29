@@ -31,9 +31,31 @@ sub-system dock.
 | **M5-feedback** | Paint mode visual feedback: **yellow cursor overlay** under the hovered plot (`decorateHover`) so the picker visibly tracks you, and a **green flash** at the clicked plot for ~2s (`commitPlot`). Resolves the "click but nothing selects it" report — the engine often doesn't refresh terrain mesh until camera-pan/end-turn (tuner has the same limitation), so this is the per-click confirmation | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `f7b73f1` |
 | **M5.x-fix2** | Map fixes from the verify round: civ colors were black/white (`primaryColor` is already 0..255 — the old `*255` overflowed to white); minimap was scaled down by `max-width:100%` (now pins pixel size + scrolls); stale module-level snapshot showed empty filters (now re-reads on every Map-tab open) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `74e2562` |
 | **M6-restyle** | Full **dark + gold** reskin of the WHOLE panel (strips Sovereign parchment/9-slice/filigree; re-skins engine `fxs-button`/`fxs-tab-bar`/`fxs-header`; locks the frame to a fixed 26×42rem so it stops resizing between tabs, content scrolls internally). **Root-cause fix:** the panel runs in a *separate Gameface document*, so the `<style>` was being appended to the wrong `document.head` and never applied — now appended into `this.Root.ownerDocument`. This is why **every prior restyle "didn't show up"** | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `74e2562` |
+| **M6-center** | Panel pinned `left-0` looked lopsided after widening → `centerPanel()` measures laid-out width 1 frame after attach and centers it (drag still works from there) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `14aa071` |
+| **M7** | **Map Preview overhaul (in-panel only):** snapshot now carries per-resource `type`+`name` and per-plot `feat`/`featName` (NW identity); **feature shading** (forest/jungle/reef/ice/volcano…), **bigger default zoom (10px)**, **hover tooltip** (terrain/biome/feature/resource/coords), **click-to-pan** the real camera (`api.lookAtPlot`, read-only), and a **multi-select spotlight filter** — pick resources / natural wonders present on the map and every non-matching tile dims (matches ringed gold). Pure canvas + read-only reads; no vision granted, no save changes. Map **Paint** section kept but relabeled "experimental" (on standby) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | (this commit) |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Latest in-game feedback (2026-05-29) — restyle good; width + paint-exit fixes
+## ▶ Immediate next action: Reload UI, verify M6-center + M7 (Map Preview overhaul)
+
+JS-only (`cheat-panel.js`, `api.js`, `tab-map.js`) — `~` → UI → **Reload UI**, no restart.
+
+### M7 + M6-center test plan
+1. **Open panel** → it should appear **horizontally centered** (no more big empty band on the right).
+2. **Map tab → Map Preview:** minimap is larger/clearer now; **feature shading** visible (forests/jungle
+   darker green, reef teal, ice white, etc.). Hover a tile → **tooltip** shows coords / terrain / biome /
+   feature(or wonder) / resource. **Click a tile** → the real game camera pans there.
+3. **Spotlight filter** (below the preview): a list of the **resources** and **natural wonders** actually
+   present on the map. Click one or several → every other tile **dims**, matches are **ringed gold**, and
+   the status line shows the matched-tile count. **Clear** resets. (E.g. select "Llamas" → only Llama
+   tiles stay bright.)
+4. Cities / Resources / Me toggles and zoom −/+ / ↻ still work; civ colors correct (not white/black).
+5. **Map Paint** is now labeled "experimental" and is **on standby** — don't test it (known exit trap,
+   recorded in `Minor_todos.md` #3).
+
+**Open ❓ to confirm:** hover/click plot mapping is approximate near hex-offset rows — if the tooltip/pan
+feels off by one row/column at high zoom, say so and I'll refine the inverse mapping.
+
+## ▶ (resolved) Latest in-game feedback (2026-05-29) — restyle good; width + paint-exit fixes
 
 - ✅ **Restyle approved** ("style is good, keep it"). Panel now opens (the `4424a2a` backtick fix).
 - **Width too narrow → fixed (`953c319`):** locked width `26rem` → `78rem` (~3×), `max-width:96vw` guard.
@@ -47,7 +69,7 @@ sub-system dock.
   the terrain just doesn't visibly redraw until a camera-pan/end-turn — engine limitation, now stated in
   the banner._
 
-## ▶ Immediate next action: Reload UI, verify M6-restyle + M5.x-fix2
+## ▶ (resolved) Reload UI, verify M6-restyle + M5.x-fix2 — restyle approved 2026-05-29
 
 JS-only (`cheat-panel.js`, `api.js`, `tab-map.js`) — no `.modinfo` / database / new files.
 In-game: `~` → UI → **Reload UI** (no restart needed).
