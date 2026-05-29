@@ -1,6 +1,6 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-05-28. Read this first to resume work._
+_Last updated: 2026-05-29. Read this first to resume work._
 
 ## What this is
 A **private, single-player** Civilization VII cheat/sandbox panel mod, built as a private fork of the
@@ -29,11 +29,41 @@ sub-system dock.
 | **M5.1-fix** | Restyle catches `fxs-button` too: filter `saturate(0.6) brightness(0.88)` on every `fxs-button` (light DOM, verified in core/ui/components/fxs-button.js); plus translucent inset shadow over `.cheat-frame` to dim the parchment backdrop. Canvas + type-list are `filter:none` so their colors stay accurate | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `4a24ed2` |
 | **M5.2-fix** | Filters become **toggle buttons** (no native `<input type=checkbox>`), **default tile size 8px** with **zoom −/+** buttons (2..20px range), new **Me** filter renders the local player's units as small triangles in the civ's primary color (no AI tracked). Status line reports zoom + counts | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `4a24ed2` |
 | **M5-feedback** | Paint mode visual feedback: **yellow cursor overlay** under the hovered plot (`decorateHover`) so the picker visibly tracks you, and a **green flash** at the clicked plot for ~2s (`commitPlot`). Resolves the "click but nothing selects it" report — the engine often doesn't refresh terrain mesh until camera-pan/end-turn (tuner has the same limitation), so this is the per-click confirmation | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `f7b73f1` |
-| **M6** | Polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
+| **M5.x-fix2** | Map fixes from the verify round: civ colors were black/white (`primaryColor` is already 0..255 — the old `*255` overflowed to white); minimap was scaled down by `max-width:100%` (now pins pixel size + scrolls); stale module-level snapshot showed empty filters (now re-reads on every Map-tab open) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | (uncommitted→this commit) |
+| **M6-restyle** | Full **dark + gold** reskin of the WHOLE panel (strips Sovereign parchment/9-slice/filigree; re-skins engine `fxs-button`/`fxs-tab-bar`/`fxs-header`; locks the frame to a fixed 26×42rem so it stops resizing between tabs, content scrolls internally). **Root-cause fix:** the panel runs in a *separate Gameface document*, so the `<style>` was being appended to the wrong `document.head` and never applied — now appended into `this.Root.ownerDocument`. This is why **every prior restyle "didn't show up"** | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | (this commit) |
+| **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: Reload UI, verify M5.1-fix + M5.2-fix
+## ▶ Immediate next action: Reload UI, verify M6-restyle + M5.x-fix2
 
-JS-only — no `.modinfo` / database / new files. In-game: `~` → UI → **Reload UI** (no restart needed).
+JS-only (`cheat-panel.js`, `api.js`, `tab-map.js`) — no `.modinfo` / database / new files.
+In-game: `~` → UI → **Reload UI** (no restart needed).
+
+### 🔑 Key discovery (2026-05-29) — the panel lives in a SEPARATE Gameface document
+Every earlier restyle (M5.1, M5.1-fix) "didn't show up" because `injectPanelStyles()` appended its
+`<style>` to the module-global `document.head` — but `panel-lcp` renders in a **different Gameface
+view/context**, so that `<style>` landed in the wrong document and never matched `.cheat-frame`. The
+fix: append into `(this.Root && this.Root.ownerDocument) || document`. (This is almost certainly the
+**same context split** behind the "`LCP:` console.logs never reach UI.log" diagnostic — our logs go
+to the panel-isolate console, not the main UI log.) With styles now landing in-scope, the M6 reskin
+also *recolors* the `fxs-button` gold 9-slice by nulling its `background-image` and painting a flat
+fill — `filter: brightness` alone (the M5.1-fix approach) could never recolor a texture, which is the
+secondary reason the dim never read as a restyle.
+
+### M6-restyle + M5.x-fix2 test plan (Reload UI)
+1. Open the panel (dock skull). It should now look **clearly different** — a flat **dark** panel with a
+   thin **gold** edge, no parchment backdrop, no filigree ornaments. Drag (grab header), tab switches,
+   F8/dock-skull open, and the X close must all still work.
+2. The frame should be a **fixed size** and **not resize** as you switch tabs — long tabs scroll
+   internally instead of growing the panel.
+3. Engine buttons (Player/Units/Cities/Research tabs) should be **dark with gold labels/edges** like our
+   own row buttons — not the old gold-gradient Civ buttons. Tab bar: gold 2px underline under the
+   selected tab, selected tab label brighter.
+4. **Map** tab → minimap should be **large and readable** now (pinned pixel size; scrolls inside its box
+   if bigger than the panel). Toggle **Cities** / **Me** / **Resources** — markers appear/disappear.
+5. **Cities** and **Me** markers must show in the **civ's real color** (not black, not white). This is the
+   `*255` fix — if a city/unit marker is white or black, the color assumption is still wrong; report it.
+6. Open Map tab, then switch away and back (or found a city / move the settler, then reopen Map) — the
+   snapshot should **re-read** and reflect the current state (no more permanently-empty filters).
 
 ### 🛑 M5.1 + M5.2 issues found & fixed (2026-05-28, post-restart)
 

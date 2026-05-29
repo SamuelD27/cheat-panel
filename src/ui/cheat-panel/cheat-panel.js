@@ -76,22 +76,59 @@ class ScreenCheatPanel extends Panel {
     }
 
     /**
-     * Scoped panel styles (M5.1 "light touch" restyle).
+     * Scoped panel styles — M6 FULL restyle ("dark + gold", Civ nod).
      *
      * Two jobs:
      *   1) fxs-stepper ships no CSS of its own — its arrows render invisible inside this panel, so we
      *      draw our own chevrons and give the click targets a guaranteed size.
-     *   2) Flatter, more muted "third-party tool" look on top of the existing Civ frame: gradients
-     *      replaced with flat fills, gold dimmed toward bronze, borders thinner and less yellow,
-     *      corners less rounded. We do NOT touch the structural fxs-* components (header, tab-bar,
-     *      subsystem-frame, backdrop image) so drag / tab routing / close / focus all keep working.
-     *      All selectors are scoped to .cheat-frame so no other panel in the game is affected.
+     *   2) A complete dark+gold reskin of the WHOLE panel — not just our DOM widgets. We strip the
+     *      Sovereign chrome (parchment backdrop, gold 9-slice border, filigree) and re-skin the
+     *      engine fxs-button / fxs-tab-bar / fxs-header too, then LOCK the frame to a fixed size so it
+     *      no longer resizes between tabs (content scrolls internally). All selectors are scoped to
+     *      .cheat-frame, and we only override CSS (never the base DOM), so drag / tab routing / close /
+     *      open animation all keep working.
      */
     injectPanelStyles() {
-        if (document.getElementById("lcp-panel-styles")) return;
-        const style = document.createElement("style");
+        // Use the PANEL's own document, not the module-global `document`. This panel runs in a
+        // separate Gameface view/context (the same reason our `LCP:` console.logs never reached
+        // UI.log), so the module-global `document.head` is a DIFFERENT document than the one the
+        // panel element lives in — a <style> appended there silently never applies to .cheat-frame.
+        // Appending into this.Root.ownerDocument (or this.Root itself) guarantees it's in-scope.
+        const doc = (this.Root && this.Root.ownerDocument) || document;
+        if (doc.getElementById("lcp-panel-styles")) return;
+        const style = doc.createElement("style");
         style.id = "lcp-panel-styles";
         style.textContent = `
+            /* ===== M6 full restyle: dark + gold (Civ nod). Scoped to .cheat-frame only. =====
+               Strips the Sovereign chrome (parchment backdrop, gold 9-slice border, filigree
+               ornaments) and lays down a flat dark panel with a thin gold edge. Pure CSS — the base
+               fxs-subsystem-frame DOM is untouched, so drag / tab routing / close / open all keep
+               working. See fxs-subsystem-frame.js / fxs-inner-frame.js for the element anatomy. */
+
+            /* Panel skin + LOCKED SIZE — the frame no longer grows/shrinks with tab content; it's a
+               fixed box and the content area scrolls internally, so every tab is the same size. */
+            .cheat-frame {
+                display: flex !important; flex-direction: column !important;
+                width: 26rem !important; height: 42rem !important;
+                background-color: #14110b !important;
+                border: 1px solid #6e5a28 !important;
+                border-radius: 0.45rem !important;
+                box-shadow: 0 10px 34px rgba(0,0,0,0.6) !important;
+            }
+            /* Make the interior fill the fixed height and let ONLY the content scroll. */
+            .cheat-frame > fxs-vslot { min-height: 0 !important; flex: 1 1 auto !important; }
+            .cheat-frame .subsystem-frame__content { min-height: 0 !important; }
+            /* Strip the Sovereign chrome. */
+            .cheat-frame > .size-full.pointer-events-none { display: none !important; } /* parchment backdrop */
+            .cheat-frame .frame-top-curve { background-image: none !important; border-image: none !important; -webkit-mask-image: none !important; }
+            .cheat-frame .fxs-subsystem-frame__filigree,
+            .cheat-frame .filigree-panel-top-left,
+            .cheat-frame .filigree-panel-top-right,
+            .cheat-frame .filigree-inner-frame-top,
+            .cheat-frame .filigree-inner-frame-bottom { display: none !important; }
+            /* Inner-frame tabs: transparent, no own chrome (they sit directly on the dark panel). */
+            .cheat-frame .inner-frame { background-color: transparent !important; }
+
             .cheat-frame .fxs-stepper-left,
             .cheat-frame .fxs-stepper-right {
                 position: relative;
@@ -113,18 +150,18 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-left::before {
                 border-top: 0.55rem solid transparent;
                 border-bottom: 0.55rem solid transparent;
-                border-right: 0.72rem solid #c5a042;
+                border-right: 0.72rem solid #d8b24a;
                 transform: translate(-65%, -50%);
             }
             .cheat-frame .fxs-stepper-right::before {
                 border-top: 0.55rem solid transparent;
                 border-bottom: 0.55rem solid transparent;
-                border-left: 0.72rem solid #c5a042;
+                border-left: 0.72rem solid #d8b24a;
                 transform: translate(-35%, -50%);
             }
             .cheat-frame .fxs-stepper-left:hover::before { border-right-color: #e6c66e; }
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #e6c66e; }
-            .cheat-frame fxs-header { cursor: grab; }
+            .cheat-frame fxs-header { cursor: grab; width: 100% !important; color: #e8dcc0 !important; }
             .cheat-frame .cheat-unit-list, .cheat-frame .cheat-city-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
             .cheat-frame .lcp-list-empty { color: #a89878; text-align: center; padding: 0.5rem; font-size: 0.8rem; }
             .cheat-frame .lcp-row {
@@ -139,59 +176,61 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .lcp-row-btn {
                 flex: 1 1 auto; margin-right: 0.25rem;
                 padding: 0.18rem 0.35rem; font-size: 0.75rem;
-                color: #1a1206; background: #c5a042;
-                border: 1px solid #5a481c; border-radius: 0.12rem; cursor: pointer;
-                transition: background-color 0.08s;
+                color: #d8b24a; background: #241d10;
+                border: 1px solid #6e5a28; border-radius: 0.18rem; cursor: pointer;
+                transition: background-color 0.08s, color 0.08s;
             }
-            .cheat-frame .lcp-row-btn:hover { background: #d8b556; }
+            .cheat-frame .lcp-row-btn:hover { background: #362c17; color: #e6c66e; }
             .cheat-frame .lcp-row-btn:last-child { margin-right: 0; }
             .cheat-frame .lcp-row-btns + .lcp-row-btns { margin-top: 0.2rem; }
-            .cheat-frame .lcp-row-btn.active { background: #4a9970; color: #07210f; border-color: #265a40; }
-            .cheat-frame .lcp-row-btn.active:hover { background: #5aae82; }
-            .cheat-frame .lcp-row-btn-danger { background: #b04535; color: #fff; border-color: #6e2818; }
-            .cheat-frame .lcp-row-btn-danger:hover { background: #c45a4a; }
+            .cheat-frame .lcp-row-btn.active { background: #d8b24a; color: #1a1206; border-color: #e6c66e; }
+            .cheat-frame .lcp-row-btn.active:hover { background: #e6c66e; }
+            .cheat-frame .lcp-row-btn-danger { background: #2a1410; color: #e88a78; border-color: #7a2c20; }
+            .cheat-frame .lcp-row-btn-danger:hover { background: #3e1c16; color: #ff9d88; }
             .cheat-frame .lcp-toggle-btn {
-                width: 100%; padding: 0.4rem; color: #1a1206; background: #c5a042;
-                border: 1px solid #5a481c; border-radius: 0.12rem; cursor: pointer; font-size: 0.85rem;
-                transition: background-color 0.08s;
+                width: 100%; padding: 0.4rem; color: #d8b24a; background: #241d10;
+                border: 1px solid #6e5a28; border-radius: 0.18rem; cursor: pointer; font-size: 0.85rem;
+                transition: background-color 0.08s, color 0.08s;
             }
-            .cheat-frame .lcp-toggle-btn:hover { background: #d8b556; }
-            .cheat-frame .lcp-toggle-btn.active { background: #4a9970; color: #07210f; border-color: #265a40; }
-            .cheat-frame .lcp-toggle-btn.active:hover { background: #5aae82; }
+            .cheat-frame .lcp-toggle-btn:hover { background: #362c17; color: #e6c66e; }
+            .cheat-frame .lcp-toggle-btn.active { background: #d8b24a; color: #1a1206; border-color: #e6c66e; }
+            .cheat-frame .lcp-toggle-btn.active:hover { background: #e6c66e; }
             .cheat-frame .lcp-section {
-                color: #8aa5a0; font-size: 0.72rem; letter-spacing: 0.08em;
+                color: #b89a55; font-size: 0.72rem; letter-spacing: 0.08em;
                 text-transform: uppercase; text-align: center;
-                margin: 0.5rem 0 0.25rem 0; opacity: 0.85;
+                margin: 0.5rem 0 0.25rem 0; opacity: 0.9;
             }
-            /* M5.1-fix: the original M5.1 only restyled OUR plain .lcp-row-btn / .lcp-toggle-btn
-               buttons — but the Player/Units/Cities/Research tabs are full of <fxs-button>s, which
-               keep the engine's gold-gradient look. Result: the user said "the restyle didn't show
-               up". fxs-button uses light DOM (verified in core/ui/components/fxs-button.js), so we
-               can target its background layers from outside. We dim the whole engine button via
-               saturate/brightness (works regardless of the 9-slice texture composition) and dim
-               the panel's parchment backdrop with a translucent inset shadow. The minimap canvas is
-               filter:none so its terrain colors are not desaturated. */
-            .cheat-frame {
-                box-shadow: inset 0 0 0 9999px rgba(8, 6, 3, 0.18);
-            }
+            /* M6 full restyle: re-skin the engine fxs-button. It's light DOM (verified in
+               core/ui/components/fxs-button.js): the gold 9-slice texture lives on stacked
+               .fxs-button__bg--{base,focus,active,disabled} layers. We null those background IMAGES
+               and paint flat dark fills with a gold edge + gold label, so the engine buttons match
+               our plain DOM buttons. (A `filter: brightness` alone couldn't recolor the gold texture
+               — that's why every earlier "dim it" attempt didn't visibly change the buttons.) */
             .cheat-frame fxs-button {
-                filter: saturate(0.6) brightness(0.88);
+                color: #d8b24a !important;
+                border: 1px solid #6e5a28 !important;
+                border-radius: 0.18rem !important;
+                overflow: hidden !important;
             }
-            .cheat-frame fxs-button:hover {
-                filter: saturate(0.7) brightness(0.96);
+            .cheat-frame fxs-button .fxs-button__bg--base     { background-image: none !important; background-color: #241d10 !important; }
+            .cheat-frame fxs-button:hover .fxs-button__bg--base { background-color: #362c17 !important; }
+            .cheat-frame fxs-button .fxs-button__bg--focus    { background-image: none !important; background-color: rgba(216,178,74,0.14) !important; }
+            .cheat-frame fxs-button .fxs-button__bg--active   { background-image: none !important; background-color: rgba(216,178,74,0.30) !important; }
+            .cheat-frame fxs-button .fxs-button__bg--disabled { background-image: none !important; background-color: rgba(0,0,0,0.45) !important; }
+
+            /* M6 full restyle: tab bar. Hide the gold bar/end-cap textures; recolor the moving
+               selection indicator to a flat 2px gold underline; gold-tint the selected tab label. */
+            .cheat-frame .img-tab-bar-flat,
+            .cheat-frame .img-tab-flat-end-cap { display: none !important; }
+            .cheat-frame fxs-tab-bar { border-bottom: 1px solid rgba(110,90,40,0.45) !important; }
+            .cheat-frame .tab-bar__selection-indicator {
+                background-image: none !important; background-color: #d8b24a !important;
+                min-height: 2px !important; height: 2px !important;
             }
-            .cheat-frame fxs-tab-bar {
-                filter: saturate(0.7);
-            }
-            .cheat-frame fxs-header {
-                filter: saturate(0.65) brightness(0.92);
-            }
-            .cheat-frame .lcp-minimap,
-            .cheat-frame .lcp-map-type-list {
-                filter: none;            /* preserve raw minimap colors / type-list contrast */
-            }
+            .cheat-frame fxs-tab-item { color: #9a8c6a !important; }
+            .cheat-frame fxs-tab-item[selected="true"] { color: #e8dcc0 !important; }
         `;
-        document.head.appendChild(style);
+        (doc.head || this.Root).appendChild(style);
     }
 
     /** Lets the player drag the panel by its header. Position is remembered for the session. */

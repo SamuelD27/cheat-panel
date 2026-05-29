@@ -509,8 +509,10 @@ export function getMapSnapshot(opts = {}) {
                     const pc = UI?.Color?.getPlayerColors?.(p.id);
                     if (pc?.primaryColor) {
                         const c = pc.primaryColor;
-                        // primaryColor is normalized 0..1 (verified vs base trade-route-chooser)
-                        color = 'rgb(' + Math.round((c.r || 0) * 255) + ',' + Math.round((c.g || 0) * 255) + ',' + Math.round((c.b || 0) * 255) + ')';
+                        // primaryColor channels are already 0..255 (verified vs base
+                        // trade-route-chooser.js:304 — `rgb(${c.r} ${c.g} ${c.b})`, no *255).
+                        // The earlier *255 pushed e.g. 38 → 9690, which CSS clamps to 255 = white.
+                        color = 'rgb(' + Math.round(c.r || 0) + ',' + Math.round(c.g || 0) + ',' + Math.round(c.b || 0) + ')';
                     }
                 } catch (_) {}
                 for (const c of p.Cities.getCities()) {
@@ -537,7 +539,8 @@ export function getMapSnapshot(opts = {}) {
                     const pc = UI?.Color?.getPlayerColors?.(me.id);
                     if (pc?.primaryColor) {
                         const c = pc.primaryColor;
-                        color = 'rgb(' + Math.round((c.r || 0) * 255) + ',' + Math.round((c.g || 0) * 255) + ',' + Math.round((c.b || 0) * 255) + ')';
+                        // 0..255 already (see cities branch above) — do NOT multiply by 255.
+                        color = 'rgb(' + Math.round(c.r || 0) + ',' + Math.round(c.g || 0) + ',' + Math.round(c.b || 0) + ')';
                     }
                 } catch (_) {}
                 for (const u of me.Units.getUnits()) {

@@ -85,6 +85,15 @@ function drawMinimap(canvas, snap, filters, tileSize) {
     canvas.width  = Math.ceil(W * tileSize + tileSize / 2);
     canvas.height = H * tileSize;
 
+    // Pin the CSS *display* size to the buffer size. Without this, the canvas (a replaced element
+    // with an intrinsic size) gets clamped to the wrap's `max-width:100%` and drawn SCALED DOWN —
+    // that was the "minimap too small / bunch of pixels" report. With the display size pinned and
+    // maxWidth defeated, an oversized canvas overflows and the wrap's `overflow:auto` scrolls it.
+    canvas.style.width    = canvas.width + 'px';
+    canvas.style.height   = canvas.height + 'px';
+    canvas.style.maxWidth = 'none';
+    canvas.style.flex     = '0 0 auto';
+
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -173,6 +182,12 @@ export function renderMapTab(container, opts = {}) {
 
     container.innerHTML = '';
 
+    // Re-read the map every time the Map tab is opened. The snapshot is module-level and was
+    // persisting across tab switches / panel reopens, so a snapshot taken before the player founded
+    // a city (or before the settler existed) left cities/myUnits empty forever — the "filters show
+    // nothing" report. A re-read is sub-100ms for ~6k plots. (↻ also still forces a re-read.)
+    _snapshotCache = null;
+
     // ═══ Section 1: Map Preview ════════════════════════════════════════
     const previewSection = document.createElement('div');
     previewSection.className = 'lcp-section';
@@ -231,10 +246,11 @@ export function renderMapTab(container, opts = {}) {
     container.appendChild(filterRow);
 
     // Canvas wrap — scrolls in BOTH axes so a wide/tall canvas can't push the panel layout.
-    // min-width:0 prevents flex children from inflating the parent's intrinsic width.
+    // NOTE: no `min-width:0` — it made the wrap shrink-to-fit and scale the canvas down. We want
+    // the canvas to keep its pinned pixel size and SCROLL inside this box instead.
     const canvasWrap = document.createElement('div');
     canvasWrap.style.cssText = 'background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
-        + 'max-width:100%; min-width:0; max-height:22rem; overflow:auto; '
+        + 'max-width:100%; max-height:24rem; overflow:auto; '
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
