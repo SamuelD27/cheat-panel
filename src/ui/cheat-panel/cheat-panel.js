@@ -110,15 +110,18 @@ class ScreenCheatPanel extends Panel {
                fixed box and the content area scrolls internally, so every tab is the same size. */
             .cheat-frame {
                 display: flex !important; flex-direction: column !important;
+                /* override the host's items-center utility: stretch the interior to the full locked
+                   width on EVERY tab, so the visible frame + tab bar no longer shrink to tab content. */
+                align-items: stretch !important;
                 width: 78rem !important; max-width: 96vw !important; height: 42rem !important;
                 background-color: #14110b !important;
                 border: 1px solid #6e5a28 !important;
                 border-radius: 0.45rem !important;
                 box-shadow: 0 10px 34px rgba(0,0,0,0.6) !important;
             }
-            /* Make the interior fill the fixed height and let ONLY the content scroll. */
-            .cheat-frame > fxs-vslot { min-height: 0 !important; flex: 1 1 auto !important; }
-            .cheat-frame .subsystem-frame__content { min-height: 0 !important; }
+            /* Make the interior fill the fixed width+height and let ONLY the content scroll. */
+            .cheat-frame > fxs-vslot { min-height: 0 !important; flex: 1 1 auto !important; width: 100% !important; max-width: 100% !important; }
+            .cheat-frame .subsystem-frame__content { min-height: 0 !important; width: 100% !important; }
             /* Strip the Sovereign chrome. */
             .cheat-frame > .size-full.pointer-events-none { display: none !important; } /* parchment backdrop */
             .cheat-frame .frame-top-curve { background-image: none !important; border-image: none !important; -webkit-mask-image: none !important; }

@@ -29,7 +29,7 @@ import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 const _state = {
     filters: { cities: true, resources: false, myUnits: true },
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
-    zoom: 14,               // pixels per tile; +/- buttons clamp to [2, 28]
+    zoom: 18,               // pixels per tile; +/- buttons clamp to [2, 34]
 };
 
 // Font-independent legend/chip swatches (the UI font lacks ■ ● ▲ ▬, which render as tofu boxes).
@@ -282,7 +282,7 @@ export function renderMapTab(container) {
     const mkToggle = (key, label, title) => {
         const b = document.createElement('button');
         b.className = 'lcp-row-btn';
-        b.style.cssText = 'flex:0 0 auto; padding:0.18rem 0.55rem; font-size:0.78rem;';
+        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem;';
         b.textContent = label;
         if (title) b.title = title;
         if (_state.filters[key]) b.classList.add('active');
@@ -302,11 +302,11 @@ export function renderMapTab(container) {
     const mkZoom = (delta, label, title) => {
         const b = document.createElement('button');
         b.className = 'lcp-row-btn';
-        b.style.cssText = 'flex:0 0 auto; padding:0.18rem 0.55rem; font-size:0.78rem; min-width:1.8rem;';
+        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem; min-width:2rem;';
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
-            _state.zoom = Math.max(2, Math.min(28, _state.zoom + delta));
+            _state.zoom = Math.max(2, Math.min(34, _state.zoom + delta));
             redraw();
         });
         return b;
@@ -316,7 +316,7 @@ export function renderMapTab(container) {
 
     const refreshBtn = document.createElement('button');
     refreshBtn.className = 'lcp-row-btn';
-    refreshBtn.style.cssText = 'flex:0 0 auto; padding:0.18rem 0.55rem; font-size:0.78rem;';
+    refreshBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem;';
     refreshBtn.textContent = '↻';
     refreshBtn.title = 'Re-read the map (cache invalidated)';
     refreshBtn.addEventListener('click', () => { _snapshotCache = null; redraw(); });
@@ -327,8 +327,10 @@ export function renderMapTab(container) {
 
     // Canvas wrap — relative so the hover tooltip can position over it; scrolls in both axes.
     const canvasWrap = document.createElement('div');
+    // width:fit-content makes the bordered box hug the canvas, so there's no dark band beside the map.
+    // If the canvas is bigger than the panel, max-width/max-height cap the box and it scrolls inside.
     canvasWrap.style.cssText = 'position:relative; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
-        + 'max-width:100%; max-height:34rem; overflow:auto; '
+        + 'width:fit-content; max-width:100%; max-height:40rem; overflow:auto; '
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
@@ -381,7 +383,7 @@ export function renderMapTab(container) {
 
     // Legend
     const legend = document.createElement('div');
-    legend.style.cssText = 'font-size:0.68rem; color:#a89878; line-height:1.5; margin-bottom:0.3rem;';
+    legend.style.cssText = 'font-size:0.82rem; color:#a89878; line-height:1.6; margin-bottom:0.3rem; white-space:nowrap;';
     legend.innerHTML = ''
         + sq('#e84a3a') + 'Strategic &nbsp; ' + sq('#c060d0') + 'Luxury &nbsp; '
         + sq('#a0e040') + 'Bonus &nbsp; ' + sq('#f4d240') + 'Treasure &nbsp;·&nbsp; '

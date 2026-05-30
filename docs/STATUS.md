@@ -33,14 +33,25 @@ sub-system dock.
 | **M6-restyle** | Full **dark + gold** reskin of the WHOLE panel (strips Sovereign parchment/9-slice/filigree; re-skins engine `fxs-button`/`fxs-tab-bar`/`fxs-header`; locks the frame to a fixed 26×42rem so it stops resizing between tabs, content scrolls internally). **Root-cause fix:** the panel runs in a *separate Gameface document*, so the `<style>` was being appended to the wrong `document.head` and never applied — now appended into `this.Root.ownerDocument`. This is why **every prior restyle "didn't show up"** | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `74e2562` |
 | **M6-center** | Panel pinned `left-0` looked lopsided after widening → `centerPanel()` measures laid-out width 1 frame after attach and centers it (drag still works from there) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `14aa071` |
 | **M7** | **Map Preview overhaul (in-panel only):** snapshot now carries per-resource `type`+`name` and per-plot `feat`/`featName` (NW identity); **feature shading** (forest/jungle/reef/ice/volcano…), **bigger default zoom (10px)**, **hover tooltip** (terrain/biome/feature/resource/coords), **click-to-pan** the real camera (`api.lookAtPlot`, read-only), and a **multi-select spotlight filter** — pick resources / natural wonders present on the map and every non-matching tile dims (matches ringed gold). Pure canvas + read-only reads; no vision granted, no save changes. Map **Paint** section kept but relabeled "experimental" (on standby) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `28fd9f6` |
-| **M8** | Map-tab feedback: (a) spotlight/legend swatches drawn as styled `<span>` (background-color / CSS-border triangle) instead of font glyphs `■ ● ▲ ▬` (those rendered as white/green tofu boxes); (b) **legend compressed** 3→2 lines; (c) **Map Paint moved to a new CREATIVE tab** (`tab-creative.js`) so the minimap reclaims the freed space; (d) **bigger map** — default zoom 10→14px, max zoom 24→28, canvas max-height 24→34rem | 🟡 **implemented & deployed (new file + modinfo + new LOC + HTML restructure → needs RESTART), NOT yet verified** | `d7cecdb` |
+| **M8** | Map-tab feedback: (a) spotlight/legend swatches drawn as styled `<span>` (background-color / CSS-border triangle) instead of font glyphs `■ ● ▲ ▬` (those rendered as white/green tofu boxes); (b) **legend compressed** 3→2 lines; (c) **Map Paint moved to a new CREATIVE tab** (`tab-creative.js`) so the minimap reclaims the freed space; (d) **bigger map** — default zoom 10→14px, max zoom 24→28, canvas max-height 24→34rem | ✅ **verified in-game (2026-05-30)** — but feedback: panel resized per tab, map didn't fill width, legend/filter fonts too small | `d7cecdb` |
+| **M8-fix** | (a) **Frame size lock actually works now**: the `.cheat-frame` host carried the `items-center` utility, so the interior `fxs-vslot` was centered & **shrank to tab content** (why the frame + tab bar resized per tab) — override with `align-items:stretch` + force interior/content `width:100%`. (b) **Map fills width**: canvas wrap `width:fit-content` (no dark band beside the map) + default zoom 14→**18** (max 28→**34**), wrap max-height 34→40rem. (c) **Bigger fonts**: legend 0.68→0.82rem (`white-space:nowrap` keeps each line grouped), filter/zoom buttons 0.78→0.92rem | 🟡 **implemented (JS-only → Reload UI), NOT yet verified** | _pending_ |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: RESTART the game, verify M8 (CREATIVE tab + map swatches + bigger map)
+## ▶ Immediate next action: Reload UI, verify M8-fix (fixed frame size + wider map + bigger fonts)
 
-M8 adds a new file (`tab-creative.js`), a new ImportFiles entry, a new LOC string
-(`LOC_LCP_CHEAT_TAB_CREATIVE`), and an HTML tab restructure → **full game restart** (not Reload UI).
-M7 verified good in-game (2026-05-30): filters perfect, click-to-pan works.
+M8-fix is **JS/CSS-only** (`cheat-panel.js` + `tab-map.js`) → in-game `~` → UI → **Reload UI** (no
+restart). M8 itself verified good in-game (2026-05-30): 6 tabs present, CREATIVE tab works, swatches
+clean. Feedback addressed by M8-fix below.
+
+### M8-fix test plan (Reload UI)
+1. **Frame no longer resizes per tab.** Switch Player → Units → Cities → Map → Creative → Research: the
+   panel and the tab bar should stay **the same width/height** on every tab (Map no longer makes it big,
+   Research no longer squeezes it). Long tabs scroll internally.
+2. **Map fills the width.** Map tab: the minimap is bigger (default zoom 18) and the bordered box hugs the
+   map — **no dark empty band beside it**. Zoom −/+ now goes up to 34; ↻ + hover-tooltip + click-to-pan
+   unchanged.
+3. **Bigger legend + filters.** The legend text and the Cities/Resources/Me + zoom buttons are visibly
+   larger; the legend stays **2 grouped lines** (doesn't explode into one item per line).
 
 ### M8 test plan (after restart)
 1. **Map tab → spotlight filter:** the white/green tofu squares next to resource names are gone —
