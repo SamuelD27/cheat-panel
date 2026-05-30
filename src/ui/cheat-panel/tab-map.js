@@ -381,16 +381,33 @@ export function renderMapTab(container) {
         if (loc) api.lookAtPlot(loc);
     });
 
-    // Legend
+    // Legend — laid out as fixed-width chips (3 per line) via flex-wrap. (Inline text + <br> rendered
+    // one-item-per-line in this Gameface build; an explicit chip grid is reliable.)
     const legend = document.createElement('div');
-    legend.style.cssText = 'font-size:0.82rem; color:#a89878; line-height:1.6; margin-bottom:0.3rem; white-space:nowrap;';
-    legend.innerHTML = ''
-        + sq('#e84a3a') + 'Strategic &nbsp; ' + sq('#c060d0') + 'Luxury &nbsp; '
-        + sq('#a0e040') + 'Bonus &nbsp; ' + sq('#f4d240') + 'Treasure &nbsp;·&nbsp; '
-        + sq('#fcd040') + 'Wonder<br>'
-        + bar('#7ec8e3') + 'Minor river &nbsp; ' + bar('#4a90d0') + 'Navigable &nbsp; '
-        + sq('#ccc') + 'City (your color) &nbsp; ' + tri('#ccc') + 'Unit &nbsp;·&nbsp; '
-        + 'hover = info, click = pan';
+    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:0.82rem; color:#a89878; '
+        + 'line-height:1.5; margin-bottom:0.3rem;';
+    const legendItems = [
+        sq('#e84a3a') + 'Strategic',
+        sq('#c060d0') + 'Luxury',
+        sq('#a0e040') + 'Bonus',
+        sq('#f4d240') + 'Treasure',
+        sq('#fcd040') + 'Wonder',
+        bar('#7ec8e3') + 'Minor river',
+        bar('#4a90d0') + 'Navigable',
+        sq('#ccc') + 'City',
+        tri('#ccc') + 'Unit',
+    ];
+    for (const html of legendItems) {
+        const chip = document.createElement('span');
+        // 3 per line: each chip takes ~1/3 of the row; nowrap keeps swatch + label together.
+        chip.style.cssText = 'flex:0 0 33%; display:inline-flex; align-items:center; white-space:nowrap;';
+        chip.innerHTML = html;
+        legend.appendChild(chip);
+    }
+    const legendHint = document.createElement('span');
+    legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.76rem; margin-top:0.1rem;';
+    legendHint.textContent = 'hover a tile = info · click = pan camera';
+    legend.appendChild(legendHint);
     container.appendChild(legend);
 
     const previewMsg = document.createElement('div');

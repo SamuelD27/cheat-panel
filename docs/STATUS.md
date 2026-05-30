@@ -51,7 +51,8 @@ clean. Feedback addressed by M8-fix below.
    map — **no dark empty band beside it**. Zoom −/+ now goes up to 34; ↻ + hover-tooltip + click-to-pan
    unchanged.
 3. **Bigger legend + filters.** The legend text and the Cities/Resources/Me + zoom buttons are visibly
-   larger; the legend stays **2 grouped lines** (doesn't explode into one item per line).
+   larger; the legend is now a **3-per-line chip grid** (Strategic/Luxury/Bonus on line 1, etc.) instead
+   of one item per line, with the hover/click hint on its own line below.
 
 ### M8 test plan (after restart)
 1. **Map tab → spotlight filter:** the white/green tofu squares next to resource names are gone —
