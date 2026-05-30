@@ -118,17 +118,60 @@ function colorForResource(cls) {
     }
 }
 
-// Forward plot→pixel mapping (Y flipped so plot y=0 is at the bottom; odd rows offset half a tile).
-function plotToPx(x, y, H, tileSize) {
-    return { px: x * tileSize + (y % 2 === 1 ? tileSize / 2 : 0), py: (H - 1 - y) * tileSize };
+// ── Pointy-top hex geometry (M9) ─────────────────────────────────────────────
+// `tileSize` is the hex WIDTH = horizontal spacing between column centers in a row. For a regular
+// pointy-top hex that gives circumradius S = tileSize/√3 and row spacing 1.5·S = (√3/2)·tileSize.
+// Odd rows are offset +tileSize/2 and Y is flipped (plot y=0 at the bottom) — same offset model as
+// the engine minimap (panel-mini-map.js: percentX = (x + oddOffset + 0.5)/(W+0.5)), so plot
+// positions stay engine-accurate; we just render the real hex shape instead of a square.
+const SQRT3 = Math.sqrt(3);
+function hexMetrics(tileSize) {
+    const S = tileSize / SQRT3;          // center → top/bottom (pointy) vertex
+    return { S, halfW: tileSize / 2, rowSpacing: 1.5 * S };
 }
-// Inverse pixel→plot for hover/click. Approximate (ignores hex slant within a cell) but fine for UI.
+// Canvas buffer size in LOGICAL px (before supersampling).
+function hexCanvasSize(W, H, tileSize) {
+    const { S, rowSpacing } = hexMetrics(tileSize);
+    return { w: W * tileSize + tileSize / 2, h: 2 * S + (H - 1) * rowSpacing };
+}
+// Center of plot (x,y) in logical canvas px.
+function plotCenter(x, y, H, tileSize) {
+    const { S, rowSpacing } = hexMetrics(tileSize);
+    const offset = (y % 2 === 1) ? tileSize / 2 : 0;
+    return { cx: x * tileSize + offset + tileSize / 2, cy: S + (H - 1 - y) * rowSpacing };
+}
+// Trace a pointy-top hexagon centered at (cx,cy) into the current path.
+function hexPath(ctx, cx, cy, tileSize) {
+    const { S, halfW } = hexMetrics(tileSize);
+    const hs = S / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - S);
+    ctx.lineTo(cx + halfW, cy - hs);
+    ctx.lineTo(cx + halfW, cy + hs);
+    ctx.lineTo(cx, cy + S);
+    ctx.lineTo(cx - halfW, cy + hs);
+    ctx.lineTo(cx - halfW, cy - hs);
+    ctx.closePath();
+}
+// Inverse: logical pixel → plot, by nearest hex center over a small neighborhood (handles the
+// slanted hex edges correctly, unlike the old square floor()).
 function pxToPlot(cx, cy, W, H, tileSize) {
-    let y = H - 1 - Math.floor(cy / tileSize);
-    if (y < 0 || y >= H) return null;
-    const x = Math.floor((cx - (y % 2 === 1 ? tileSize / 2 : 0)) / tileSize);
-    if (x < 0 || x >= W) return null;
-    return { x, y };
+    const { S, rowSpacing } = hexMetrics(tileSize);
+    const dyApprox = Math.floor((cy - S) / rowSpacing);
+    let best = null, bestD = Infinity;
+    for (let dy = dyApprox - 1; dy <= dyApprox + 2; dy++) {
+        const y = H - 1 - dy;
+        if (y < 0 || y >= H) continue;
+        const offset = (y % 2 === 1) ? tileSize / 2 : 0;
+        const xApprox = Math.floor((cx - offset - tileSize / 2) / tileSize);
+        for (let x = xApprox - 1; x <= xApprox + 2; x++) {
+            if (x < 0 || x >= W) continue;
+            const c = plotCenter(x, y, H, tileSize);
+            const d = (c.cx - cx) * (c.cx - cx) + (c.cy - cy) * (c.cy - cy);
+            if (d < bestD) { bestD = d; best = { x, y }; }
+        }
+    }
+    return best;
 }
 
 /** Build the set of plot indices matching the active spotlight filters (or null if none active). */
@@ -148,7 +191,11 @@ function computeMatchSet(snap, spotlight) {
     return set;
 }
 
-/** Paint the snapshot onto the canvas at the current zoom + filters + spotlight. */
+// Supersample factor: render the buffer at SS× the display size, then CSS-scale down so the slanted
+// hex edges are anti-aliased instead of stair-stepped. (image-rendering stays 'auto' for smoothing.)
+const SUPERSAMPLE = 2;
+
+/** Paint the snapshot onto the canvas at the current zoom + filters + spotlight, as pointy-top hexes. */
 function drawMinimap(canvas, snap, opts) {
     if (!snap || !snap.width || !snap.height) return;
     const W = snap.width, H = snap.height;
@@ -157,70 +204,91 @@ function drawMinimap(canvas, snap, opts) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width  = Math.ceil(W * tileSize + tileSize / 2);
-    canvas.height = H * tileSize;
-    // Pin the CSS display size to the buffer size so the canvas is NOT scaled down by the wrap's
-    // max-width:100% (that was the old "too small / bunch of pixels" bug). Oversized → wrap scrolls it.
-    canvas.style.width    = canvas.width + 'px';
-    canvas.style.height   = canvas.height + 'px';
+    const { w: logW, h: logH } = hexCanvasSize(W, H, tileSize);
+    // Supersample only at small tile sizes (where stair-stepping shows); at large zoom the edges are
+    // already many px wide, so SS=1 keeps the buffer from ballooning on big maps.
+    const SS = tileSize >= 16 ? 1 : SUPERSAMPLE;
+    // Buffer is SS× larger; display (CSS) size is the logical size so the wrap hugs it 1:1.
+    canvas.width  = Math.ceil(logW * SS);
+    canvas.height = Math.ceil(logH * SS);
+    canvas.style.width    = Math.ceil(logW) + 'px';
+    canvas.style.height   = Math.ceil(logH) + 'px';
     canvas.style.maxWidth = 'none';
     canvas.style.flex     = '0 0 auto';
+    // Draw everything in LOGICAL coordinates; the transform scales up into the buffer.
+    ctx.setTransform(SS, 0, 0, SS, 0, 0);
+    ctx.lineJoin = 'round';
 
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, logW, logH);
 
     const matchSet = computeMatchSet(snap, opts.spotlight);
+    const { S, halfW } = hexMetrics(tileSize);
 
-    // Plots
+    // Plots — fill each hex; a same-color hairline stroke closes anti-aliasing seams between hexes.
     for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
             const p = snap.plots[y * W + x];
             if (!p) continue;
-            const { px, py } = plotToPx(x, y, H, tileSize);
-            ctx.fillStyle = colorForPlot(p);
-            ctx.fillRect(px, py, tileSize, tileSize);
+            const { cx, cy } = plotCenter(x, y, H, tileSize);
+            const col = colorForPlot(p);
+            hexPath(ctx, cx, cy, tileSize);
+            ctx.fillStyle = col;
+            ctx.fill();
+            ctx.strokeStyle = col;
+            ctx.lineWidth = 0.6;
+            ctx.stroke();
 
-            if (p.river === 1) { ctx.fillStyle = RIVER_MINOR; ctx.fillRect(px, py + tileSize - Math.max(1, Math.floor(tileSize/8)), tileSize, Math.max(1, Math.floor(tileSize/8))); }
-            else if (p.river === 2) { ctx.fillStyle = RIVER_NAV; ctx.fillRect(px, py + tileSize - Math.max(1, Math.floor(tileSize/6)), tileSize, Math.max(1, Math.floor(tileSize/6))); }
+            // River: a thin chord near the lower edges of the hex.
+            if (p.river === 1 || p.river === 2) {
+                ctx.strokeStyle = (p.river === 2) ? RIVER_NAV : RIVER_MINOR;
+                ctx.lineWidth = Math.max(1, tileSize * (p.river === 2 ? 0.18 : 0.12));
+                ctx.beginPath();
+                ctx.moveTo(cx - halfW * 0.8, cy + S * 0.55);
+                ctx.lineTo(cx + halfW * 0.8, cy + S * 0.55);
+                ctx.stroke();
+            }
 
             if (p.nw) {
                 ctx.fillStyle = NW_FILL;
-                const pip = Math.max(2, Math.floor(tileSize * 0.6));
-                ctx.fillRect(px + (tileSize - pip) / 2, py + (tileSize - pip) / 2, pip, pip);
+                const pip = Math.max(2, tileSize * 0.5);
+                ctx.beginPath();
+                ctx.arc(cx, cy, pip / 2, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
     }
 
-    // Resources
+    // Resources — center dot.
     if (filters.resources && snap.resources?.length) {
         for (const r of snap.resources) {
-            const { px, py } = plotToPx(r.x, r.y, H, tileSize);
-            const dot = Math.max(2, Math.floor(tileSize / 2));
+            const { cx, cy } = plotCenter(r.x, r.y, H, tileSize);
+            const rad = Math.max(1.5, tileSize * 0.26);
             ctx.fillStyle = colorForResource(r.cls);
-            ctx.fillRect(px + (tileSize - dot) / 2, py + (tileSize - dot) / 2, dot, dot);
+            ctx.beginPath();
+            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+            ctx.fill();
         }
     }
 
-    // Cities — square with outline, white outline for capital.
+    // Cities — filled hex in the civ color with an outline (white = capital).
     if (filters.cities && snap.cities?.length) {
         for (const c of snap.cities) {
-            const { px, py } = plotToPx(c.x, c.y, H, tileSize);
-            const size = Math.max(3, Math.floor(tileSize * 0.85));
-            const ox = px + (tileSize - size) / 2, oy = py + (tileSize - size) / 2;
+            const { cx, cy } = plotCenter(c.x, c.y, H, tileSize);
+            hexPath(ctx, cx, cy, tileSize * 0.82);
             ctx.fillStyle   = c.color || '#fff';
-            ctx.fillRect(ox, oy, size, size);
+            ctx.fill();
             ctx.strokeStyle = c.isCapital ? '#ffffff' : '#000000';
-            ctx.lineWidth   = c.isCapital ? 1.5 : 1;
-            ctx.strokeRect(ox + 0.5, oy + 0.5, size - 1, size - 1);
+            ctx.lineWidth   = c.isCapital ? Math.max(1, tileSize * 0.12) : Math.max(0.8, tileSize * 0.08);
+            ctx.stroke();
         }
     }
 
-    // My units — filled triangles in the local civ's color (distinct from city squares; drawn last).
+    // My units — filled triangles in the local civ's color (drawn last so they sit on top).
     if (filters.myUnits && snap.myUnits?.length) {
         for (const u of snap.myUnits) {
-            const { px, py } = plotToPx(u.x, u.y, H, tileSize);
-            const cx = px + tileSize / 2, cy = py + tileSize / 2;
-            const r = Math.max(2, tileSize * 0.45);
+            const { cx, cy } = plotCenter(u.x, u.y, H, tileSize);
+            const r = Math.max(2, tileSize * 0.4);
             ctx.beginPath();
             ctx.moveTo(cx, cy - r);
             ctx.lineTo(cx - r, cy + r * 0.85);
@@ -229,29 +297,33 @@ function drawMinimap(canvas, snap, opts) {
             ctx.fillStyle = u.color || '#ffd040';
             ctx.fill();
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1;
+            ctx.lineWidth = Math.max(0.8, tileSize * 0.07);
             ctx.stroke();
         }
     }
 
-    // Spotlight: dim every NON-matching plot so the matches pop; ring the matches in gold.
+    // Spotlight: dim every NON-matching hex so matches pop; ring the matches in gold.
     if (matchSet) {
         ctx.fillStyle = 'rgba(6,5,3,0.80)';
         for (let y = 0; y < H; y++) {
             for (let x = 0; x < W; x++) {
                 if (matchSet.has(y * W + x)) continue;
-                const { px, py } = plotToPx(x, y, H, tileSize);
-                ctx.fillRect(px, py, tileSize, tileSize);
+                const { cx, cy } = plotCenter(x, y, H, tileSize);
+                hexPath(ctx, cx, cy, tileSize);
+                ctx.fill();
             }
         }
         ctx.strokeStyle = '#ffe680';
-        ctx.lineWidth = Math.max(1, tileSize * 0.18);
+        ctx.lineWidth = Math.max(1, tileSize * 0.16);
         for (const i of matchSet) {
             const x = i % W, y = (i - x) / W;
-            const { px, py } = plotToPx(x, y, H, tileSize);
-            ctx.strokeRect(px + 0.5, py + 0.5, tileSize - 1, tileSize - 1);
+            const { cx, cy } = plotCenter(x, y, H, tileSize);
+            hexPath(ctx, cx, cy, tileSize * 0.92);
+            ctx.stroke();
         }
     }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s || '');
@@ -336,7 +408,7 @@ export function renderMapTab(container) {
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
-    canvas.style.cssText = 'display:block; image-rendering:pixelated; cursor:crosshair;';
+    canvas.style.cssText = 'display:block; image-rendering:auto; cursor:crosshair;';
     canvasWrap.appendChild(canvas);
 
     // Hover tooltip (absolutely positioned inside the wrap).

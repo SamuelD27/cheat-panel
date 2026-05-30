@@ -36,25 +36,29 @@ sub-system dock.
 | **M8** | Map-tab feedback: (a) spotlight/legend swatches drawn as styled `<span>` (background-color / CSS-border triangle) instead of font glyphs `■ ● ▲ ▬` (those rendered as white/green tofu boxes); (b) **legend compressed** 3→2 lines; (c) **Map Paint moved to a new CREATIVE tab** (`tab-creative.js`) so the minimap reclaims the freed space; (d) **bigger map** — default zoom 10→14px, max zoom 24→28, canvas max-height 24→34rem | ✅ **verified in-game (2026-05-30)** — but feedback: panel resized per tab, map didn't fill width, legend/filter fonts too small | `d7cecdb` |
 | **M8-fix** | (a) **Frame size lock actually works now**: the `.cheat-frame` host carried the `items-center` utility, so the interior `fxs-vslot` was centered & **shrank to tab content** (why the frame + tab bar resized per tab) — override with `align-items:stretch` + force interior/content `width:100%`. (b) **Map fills width**: canvas wrap `width:fit-content` (no dark band beside the map) + default zoom 14→**18** (max 28→**34**), wrap max-height 34→40rem. (c) **Bigger fonts**: legend 0.68→0.82rem (`white-space:nowrap` keeps each line grouped), filter/zoom buttons 0.78→0.92rem | 🟡 **implemented (JS-only → Reload UI), NOT yet verified** | `39339f8` |
 | **M8-fix3** | (a) **Legend → 3-per-line chip grid** (flex-wrap, each chip `flex:0 0 33%`) instead of one item per line; hint on its own line. (b) **Slightly bigger fonts** across all tabs (row labels/buttons 0.75–0.85→0.82–0.92rem, sections, list-empty; map legend/status/spotlight bumped). (c) **Map auto-fits panel width** (`fitZoomToWidth` from `container.clientWidth`, until the user manually zooms) so smaller maps stop leaving empty space beside the minimap | 🟡 **implemented (JS-only → Reload UI), NOT yet verified** | `33b7db1`+`83c79ab` |
-| **M9** | **Minimap precision** — investigated 2026-05-30 (see below). Awaiting user direction on scope/tradeoff before building | 🔎 investigating | — |
+| **M9** | **Minimap precision** — user chose *hexagons + sharper render* (keeps reveal-all). Replace offset-squares with true **pointy-top hexagons** (circumradius `S=tile/√3`, row spacing `1.5·S`, odd-row +½ offset — same model as engine `panel-mini-map.js`, so positions stay engine-accurate); **supersample** the canvas (SS=2 below 16px tiles, smoothing on) for crisp edges; **nearest-hex-center** hover/click pick instead of square `floor()`. Rivers→lower-edge chord, NW/resource→dots, cities→filled hex, units→triangle | 🟡 **implemented (JS-only → Reload UI), NOT yet verified** | _pending_ |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: Reload UI, verify M8-fix (fixed frame size + wider map + bigger fonts)
+## ▶ Immediate next action: Reload UI, verify M9 (hex minimap) + M8-fix3 (fonts/width/legend)
 
-M8-fix is **JS/CSS-only** (`cheat-panel.js` + `tab-map.js`) → in-game `~` → UI → **Reload UI** (no
-restart). M8 itself verified good in-game (2026-05-30): 6 tabs present, CREATIVE tab works, swatches
-clean. Feedback addressed by M8-fix below.
+All **JS/CSS-only** (`cheat-panel.js` + `tab-map.js`) → in-game `~` → UI → **Reload UI** (no restart).
 
-### M8-fix test plan (Reload UI)
-1. **Frame no longer resizes per tab.** Switch Player → Units → Cities → Map → Creative → Research: the
-   panel and the tab bar should stay **the same width/height** on every tab (Map no longer makes it big,
-   Research no longer squeezes it). Long tabs scroll internally.
-2. **Map fills the width.** Map tab: the minimap is bigger (default zoom 18) and the bordered box hugs the
-   map — **no dark empty band beside it**. Zoom −/+ now goes up to 34; ↻ + hover-tooltip + click-to-pan
-   unchanged.
-3. **Bigger legend + filters.** The legend text and the Cities/Resources/Me + zoom buttons are visibly
-   larger; the legend is now a **3-per-line chip grid** (Strategic/Luxury/Bonus on line 1, etc.) instead
-   of one item per line, with the hover/click hint on its own line below.
+### M9 test plan (Reload UI) — hex minimap
+1. **Map tab → minimap is drawn as HEXAGONS now** (pointy-top, interlocking rows), not squares, and the
+   edges look **crisp / anti-aliased** rather than blocky.
+2. **Hover precision:** moving the cursor over a tile shows the tooltip for the **correct** plot (the
+   nearest-hex-center pick should feel accurate even near the staggered row boundaries). **Click** still
+   pans the real camera to that exact tile.
+3. Cities = filled hex in civ color (capital = white outline), units = triangle, resources/wonders =
+   dots, rivers = a thin chord near the tile's lower edge. Spotlight dim/ring still works on hexes.
+4. Zoom −/+ (2–34), ↻, and Cities/Resources/Me toggles still work. **Open ❓:** if hover/pan feels off by
+   one row near the very top/bottom edges, say so — the nearest-center search window may need widening.
+
+### M8-fix3 test plan (Reload UI)
+1. **Frame no longer resizes per tab.** Player → Units → Cities → Map → Creative → Research should stay
+   the **same width/height**; long tabs scroll internally.
+2. **Map fills the width** (auto-fit zoom) — no dark band beside the minimap on smaller maps.
+3. **Bigger fonts** everywhere; legend is a **3-per-line chip grid**, hint on its own line below.
 
 ### M8 test plan (after restart)
 1. **Map tab → spotlight filter:** the white/green tofu squares next to resource names are gone —
