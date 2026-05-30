@@ -30,6 +30,7 @@ const _state = {
     filters: { cities: true, resources: false, myUnits: true },
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
     zoom: 18,               // pixels per tile; +/- buttons clamp to [2, 34]
+    userZoomed: false,      // once the user clicks −/+ we stop auto-fitting zoom to the panel width
 };
 
 // Font-independent legend/chip swatches (the UI font lacks ■ ● ▲ ▬, which render as tofu boxes).
@@ -306,6 +307,7 @@ export function renderMapTab(container) {
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
+            _state.userZoomed = true;   // manual zoom wins over auto-fit from here on
             _state.zoom = Math.max(2, Math.min(34, _state.zoom + delta));
             redraw();
         });
@@ -384,7 +386,7 @@ export function renderMapTab(container) {
     // Legend — laid out as fixed-width chips (3 per line) via flex-wrap. (Inline text + <br> rendered
     // one-item-per-line in this Gameface build; an explicit chip grid is reliable.)
     const legend = document.createElement('div');
-    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:0.82rem; color:#a89878; '
+    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:0.9rem; color:#a89878; '
         + 'line-height:1.5; margin-bottom:0.3rem;';
     const legendItems = [
         sq('#e84a3a') + 'Strategic',
@@ -405,24 +407,24 @@ export function renderMapTab(container) {
         legend.appendChild(chip);
     }
     const legendHint = document.createElement('span');
-    legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.76rem; margin-top:0.1rem;';
+    legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem;';
     legendHint.textContent = 'hover a tile = info · click = pan camera';
     legend.appendChild(legendHint);
     container.appendChild(legend);
 
     const previewMsg = document.createElement('div');
-    previewMsg.style.cssText = 'font-size:0.78rem; color:#a89878; margin-bottom:0.4rem; min-height:1.1em;';
+    previewMsg.style.cssText = 'font-size:0.85rem; color:#a89878; margin-bottom:0.4rem; min-height:1.1em;';
     container.appendChild(previewMsg);
 
     // ── Spotlight filter section ──
     const spotHeader = document.createElement('div');
     spotHeader.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin:0.2rem 0;';
     const spotTitle = document.createElement('div');
-    spotTitle.style.cssText = 'font-size:0.74rem; color:#b89a55; letter-spacing:0.04em; text-transform:uppercase;';
+    spotTitle.style.cssText = 'font-size:0.82rem; color:#b89a55; letter-spacing:0.04em; text-transform:uppercase;';
     spotTitle.textContent = 'Spotlight filter';
     const spotClear = document.createElement('button');
     spotClear.className = 'lcp-row-btn';
-    spotClear.style.cssText = 'flex:0 0 auto; padding:0.12rem 0.5rem; font-size:0.74rem; margin-left:auto;';
+    spotClear.style.cssText = 'flex:0 0 auto; padding:0.14rem 0.55rem; font-size:0.82rem; margin-left:auto;';
     spotClear.textContent = 'Clear';
     spotClear.title = 'Clear all spotlight selections';
     spotClear.addEventListener('click', () => {
@@ -435,7 +437,7 @@ export function renderMapTab(container) {
     container.appendChild(spotHeader);
 
     const spotHint = document.createElement('div');
-    spotHint.style.cssText = 'font-size:0.68rem; color:#8a7c5c; margin-bottom:0.2rem;';
+    spotHint.style.cssText = 'font-size:0.78rem; color:#8a7c5c; margin-bottom:0.2rem;';
     spotHint.textContent = 'Select resources / wonders to highlight; everything else dims.';
     container.appendChild(spotHint);
 
@@ -467,14 +469,14 @@ export function renderMapTab(container) {
 
         const addGroupLabel = (text) => {
             const l = document.createElement('div');
-            l.style.cssText = 'flex:1 1 100%; font-size:0.66rem; color:#9a8c6a; margin:0.15rem 0 0 0;';
+            l.style.cssText = 'flex:1 1 100%; font-size:0.76rem; color:#9a8c6a; margin:0.15rem 0 0 0;';
             l.textContent = text;
             spotListEl.appendChild(l);
         };
         const addChip = (key, label, dotColor) => {
             const b = document.createElement('button');
             b.className = 'lcp-row-btn';
-            b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.12rem 0.4rem; font-size:0.72rem;';
+            b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.14rem 0.45rem; font-size:0.82rem;';
             b.innerHTML = (dotColor ? sq(dotColor) : '') + label;
             if (_state.spotlight.has(key)) b.classList.add('active');
             b.addEventListener('click', () => {
@@ -519,6 +521,17 @@ export function renderMapTab(container) {
         previewMsg.textContent = msg;
     };
 
+    // Auto-fit zoom so the map fills the panel width (until the user manually zooms). The canvas is
+    // W+0.5 tiles wide (the +0.5 is the odd-row hex offset); fit to the content area minus the wrap
+    // chrome (~12px padding+border). This removes the empty space beside smaller maps.
+    const fitZoomToWidth = (W) => {
+        if (_state.userZoomed) return;
+        const avail = container.clientWidth;
+        if (!avail || avail < 40 || !W) return;
+        const z = Math.floor((avail - 12) / (W + 0.5));
+        if (z >= 2) _state.zoom = Math.max(2, Math.min(34, z));
+    };
+
     const redraw = () => {
         if (!_snapshotCache && !_snapshotInFlight) {
             _snapshotInFlight = true;
@@ -528,6 +541,7 @@ export function renderMapTab(container) {
                 catch (e) { api.ERR('getMapSnapshot failed:', e); previewMsg.textContent = 'Snapshot failed (see UI.log).'; _snapshotInFlight = false; return; }
                 _snapshotInFlight = false;
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
+                fitZoomToWidth(_snapshotCache.width);
                 drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
                 buildSpotlightList();
                 setStatus();
@@ -535,6 +549,7 @@ export function renderMapTab(container) {
             return;
         }
         if (_snapshotCache) {
+            fitZoomToWidth(_snapshotCache.width);
             drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
             setStatus();
         }

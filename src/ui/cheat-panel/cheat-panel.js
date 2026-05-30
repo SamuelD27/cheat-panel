@@ -167,19 +167,19 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #e6c66e; }
             .cheat-frame fxs-header { cursor: grab; width: 100% !important; color: #e8dcc0 !important; }
             .cheat-frame .cheat-unit-list, .cheat-frame .cheat-city-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
-            .cheat-frame .lcp-list-empty { color: #a89878; text-align: center; padding: 0.5rem; font-size: 0.8rem; }
+            .cheat-frame .lcp-list-empty { color: #a89878; text-align: center; padding: 0.5rem; font-size: 0.88rem; }
             .cheat-frame .lcp-row {
                 display: flex; flex-direction: column;
                 padding: 0.3rem 0.45rem; margin: 0.18rem 0;
                 background: rgba(8,6,3,0.6);
                 border: 1px solid rgba(120,100,55,0.35); border-radius: 0.15rem;
             }
-            .cheat-frame .lcp-row-label { color: #d8caa0; font-size: 0.8rem; cursor: pointer; margin-bottom: 0.25rem; letter-spacing: 0.02em; }
+            .cheat-frame .lcp-row-label { color: #d8caa0; font-size: 0.88rem; cursor: pointer; margin-bottom: 0.25rem; letter-spacing: 0.02em; }
             .cheat-frame .lcp-row-label:hover { color: #f0e0b0; }
             .cheat-frame .lcp-row-btns { display: flex; flex-direction: row; }
             .cheat-frame .lcp-row-btn {
                 flex: 1 1 auto; margin-right: 0.25rem;
-                padding: 0.18rem 0.35rem; font-size: 0.75rem;
+                padding: 0.2rem 0.4rem; font-size: 0.82rem;
                 color: #d8b24a; background: #241d10;
                 border: 1px solid #6e5a28; border-radius: 0.18rem; cursor: pointer;
                 transition: background-color 0.08s, color 0.08s;
@@ -193,14 +193,14 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .lcp-row-btn-danger:hover { background: #3e1c16; color: #ff9d88; }
             .cheat-frame .lcp-toggle-btn {
                 width: 100%; padding: 0.4rem; color: #d8b24a; background: #241d10;
-                border: 1px solid #6e5a28; border-radius: 0.18rem; cursor: pointer; font-size: 0.85rem;
+                border: 1px solid #6e5a28; border-radius: 0.18rem; cursor: pointer; font-size: 0.92rem;
                 transition: background-color 0.08s, color 0.08s;
             }
             .cheat-frame .lcp-toggle-btn:hover { background: #362c17; color: #e6c66e; }
             .cheat-frame .lcp-toggle-btn.active { background: #d8b24a; color: #1a1206; border-color: #e6c66e; }
             .cheat-frame .lcp-toggle-btn.active:hover { background: #e6c66e; }
             .cheat-frame .lcp-section {
-                color: #b89a55; font-size: 0.72rem; letter-spacing: 0.08em;
+                color: #b89a55; font-size: 0.8rem; letter-spacing: 0.08em;
                 text-transform: uppercase; text-align: center;
                 margin: 0.5rem 0 0.25rem 0; opacity: 0.9;
             }
