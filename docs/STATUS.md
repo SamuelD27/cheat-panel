@@ -1,6 +1,6 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-05-29. Read this first to resume work._
+_Last updated: 2026-05-30. Read this first to resume work._
 
 ## What this is
 A **private, single-player** Civilization VII cheat/sandbox panel mod, built as a private fork of the
@@ -33,13 +33,30 @@ sub-system dock.
 | **M6-restyle** | Full **dark + gold** reskin of the WHOLE panel (strips Sovereign parchment/9-slice/filigree; re-skins engine `fxs-button`/`fxs-tab-bar`/`fxs-header`; locks the frame to a fixed 26×42rem so it stops resizing between tabs, content scrolls internally). **Root-cause fix:** the panel runs in a *separate Gameface document*, so the `<style>` was being appended to the wrong `document.head` and never applied — now appended into `this.Root.ownerDocument`. This is why **every prior restyle "didn't show up"** | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `74e2562` |
 | **M6-center** | Panel pinned `left-0` looked lopsided after widening → `centerPanel()` measures laid-out width 1 frame after attach and centers it (drag still works from there) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `14aa071` |
 | **M7** | **Map Preview overhaul (in-panel only):** snapshot now carries per-resource `type`+`name` and per-plot `feat`/`featName` (NW identity); **feature shading** (forest/jungle/reef/ice/volcano…), **bigger default zoom (10px)**, **hover tooltip** (terrain/biome/feature/resource/coords), **click-to-pan** the real camera (`api.lookAtPlot`, read-only), and a **multi-select spotlight filter** — pick resources / natural wonders present on the map and every non-matching tile dims (matches ringed gold). Pure canvas + read-only reads; no vision granted, no save changes. Map **Paint** section kept but relabeled "experimental" (on standby) | 🟡 **implemented (JS-only Reload UI), NOT yet verified** | `28fd9f6` |
+| **M8** | Map-tab feedback: (a) spotlight/legend swatches drawn as styled `<span>` (background-color / CSS-border triangle) instead of font glyphs `■ ● ▲ ▬` (those rendered as white/green tofu boxes); (b) **legend compressed** 3→2 lines; (c) **Map Paint moved to a new CREATIVE tab** (`tab-creative.js`) so the minimap reclaims the freed space; (d) **bigger map** — default zoom 10→14px, max zoom 24→28, canvas max-height 24→34rem | 🟡 **implemented & deployed (new file + modinfo + new LOC + HTML restructure → needs RESTART), NOT yet verified** | _pending_ |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: Reload UI, verify M6-center + M7 (Map Preview overhaul)
+## ▶ Immediate next action: RESTART the game, verify M8 (CREATIVE tab + map swatches + bigger map)
 
-JS-only (`cheat-panel.js`, `api.js`, `tab-map.js`) — `~` → UI → **Reload UI**, no restart.
+M8 adds a new file (`tab-creative.js`), a new ImportFiles entry, a new LOC string
+(`LOC_LCP_CHEAT_TAB_CREATIVE`), and an HTML tab restructure → **full game restart** (not Reload UI).
+M7 verified good in-game (2026-05-30): filters perfect, click-to-pan works.
 
-### M7 + M6-center test plan
+### M8 test plan (after restart)
+1. **Map tab → spotlight filter:** the white/green tofu squares next to resource names are gone —
+   each chip now shows a small **colored swatch** matching the resource class. Legend below the map
+   is **2 compact lines** with the same clean swatches (square / river bar / unit triangle).
+2. **Bigger minimap:** the map now defaults to a larger zoom (14px) and should fill the panel width
+   much better — the big black band on the right should be largely gone. Zoom −/+ (range 2–28) and ↻
+   still work; hover tooltip + click-to-pan unchanged.
+3. **New CREATIVE tab** (between Map and Research): it holds the old **Map Paint** UI (Terrain /
+   Feature / Resource / Biome → pick a type → [Paint at clicked tile]). The Map tab no longer has the
+   paint section. Paint itself is still **experimental/standby** — open the tab, confirm it renders the
+   category buttons + type list, but you don't have to actually paint.
+4. Other tabs (Player / Units / Cities / Research) unchanged; tab switching, drag, close, F8/dock all
+   still work with 6 tabs in the bar.
+
+### (verified 2026-05-30) M7 + M6-center test plan
 1. **Open panel** → it should appear **horizontally centered** (no more big empty band on the right).
 2. **Map tab → Map Preview:** minimap is larger/clearer now; **feature shading** visible (forests/jungle
    darker green, reef teal, ice white, etc.). Hover a tile → **tooltip** shows coords / terrain / biome /

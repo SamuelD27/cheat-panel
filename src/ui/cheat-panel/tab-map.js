@@ -1,39 +1,41 @@
 /**
  * @file tab-map.js
- * @description Map tab — two sections:
+ * @description Map tab — the read-only Map Preview minimap (M5.2 + M7 + M8).
  *
- *   1) Map Preview (M5.2 + M7) — read-only minimap drawn to a canvas using api.getMapSnapshot().
- *      Pure reads from GameplayMap.* — does NOT touch fog-of-war / visibility, does NOT grant any
- *      in-game vision, can't affect save state. It deliberately reads the WHOLE map regardless of
- *      fog, so it doubles as a "see the hidden map without discovering it" view.
+ *   Map Preview — read-only minimap drawn to a canvas using api.getMapSnapshot(). Pure reads from
+ *   GameplayMap.* — does NOT touch fog-of-war / visibility, does NOT grant any in-game vision, can't
+ *   affect save state. It deliberately reads the WHOLE map regardless of fog, so it doubles as a
+ *   "see the hidden map without discovering it" view.
  *
- *      M7 additions:
- *        - Feature shading (forest/jungle/reef/ice/…) on top of the biome tint; bigger default zoom.
- *        - Hover tooltip: shows terrain/biome/feature/resource/coords for the plot under the cursor.
- *        - Click-to-pan: clicking a plot pans the real game camera there (api.lookAtPlot, read-only).
- *        - Spotlight filter: multi-select the resources / natural wonders present on the map; when any
- *          are selected, every non-matching plot is dimmed so the matches "pop". Pure canvas overlay —
- *          no engine calls, no vision granted.
+ *     - Feature shading (forest/jungle/reef/ice/…) on top of the biome tint.
+ *     - Hover tooltip: shows terrain/biome/feature/resource/coords for the plot under the cursor.
+ *     - Click-to-pan: clicking a plot pans the real game camera there (api.lookAtPlot, read-only).
+ *     - Spotlight filter: multi-select the resources / natural wonders present on the map; when any
+ *       are selected, every non-matching plot is dimmed so the matches "pop". Pure canvas overlay —
+ *       no engine calls, no vision granted.
  *
- *      Native <input type="checkbox"> is avoided on purpose: Coherent Gameface renders it weirdly in
- *      this build. All toggles are custom buttons (.lcp-row-btn + .active).
+ *   Native <input type="checkbox"> is avoided on purpose: Coherent Gameface renders it weirdly in
+ *   this build. All toggles are custom buttons (.lcp-row-btn + .active). Legend/chip markers are
+ *   drawn as styled <span> swatches (background-color / CSS-border triangle), NOT font glyphs like
+ *   ■ ● ▲ — those render as tofu boxes in this build's UI font (M8 fix).
  *
- *   2) Map Paint (M5) — ON STANDBY (see docs/Minor_todos.md #3). UI remains but development is paused:
- *      known issues are the exit trap (can't leave paint mode) and feature-placement rejections.
+ *   The Map Paint world-editor moved to the CREATIVE tab (tab-creative.js) in M8 so the minimap can
+ *   use the full panel width.
  *
- * Module-level _state keeps selection/filters/zoom across tab switches in a single session.
+ * Module-level _state keeps filters/spotlight/zoom across tab switches in a single session.
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
-const CATEGORIES = ['Terrain', 'Feature', 'Resource', 'Biome'];
-
 const _state = {
-    category: 'Terrain',
-    type: null,
     filters: { cities: true, resources: false, myUnits: true },
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
-    zoom: 10,               // pixels per tile; +/- buttons clamp to [2, 24]
+    zoom: 14,               // pixels per tile; +/- buttons clamp to [2, 28]
 };
+
+// Font-independent legend/chip swatches (the UI font lacks ■ ● ▲ ▬, which render as tofu boxes).
+const sq  = (c) => '<span style="display:inline-block;width:0.62em;height:0.62em;background:' + c + ';vertical-align:-0.06em;margin-right:0.22rem;border-radius:1px;"></span>';
+const bar = (c) => '<span style="display:inline-block;width:0.95em;height:0.28em;background:' + c + ';vertical-align:0.1em;margin-right:0.22rem;border-radius:1px;"></span>';
+const tri = (c) => '<span style="display:inline-block;width:0;height:0;border-left:0.32em solid transparent;border-right:0.32em solid transparent;border-bottom:0.55em solid ' + c + ';vertical-align:-0.02em;margin-right:0.22rem;"></span>';
 let _snapshotCache = null;
 let _snapshotInFlight = false;
 
@@ -254,14 +256,11 @@ function drawMinimap(canvas, snap, opts) {
 const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s || '');
 
 /**
- * (Re)build the Map tab content inside `container`.
+ * (Re)build the Map tab content inside `container`. Read-only — no opts needed.
  * @param {HTMLElement} container        the .cheat-map-content element
- * @param {object} opts
- * @param {() => void} opts.closePanel   close the cheat panel (before entering the paint mode)
  */
-export function renderMapTab(container, opts = {}) {
+export function renderMapTab(container) {
     if (!container) return;
-    const closePanel = opts.closePanel || (() => {});
 
     container.innerHTML = '';
 
@@ -307,7 +306,7 @@ export function renderMapTab(container, opts = {}) {
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
-            _state.zoom = Math.max(2, Math.min(24, _state.zoom + delta));
+            _state.zoom = Math.max(2, Math.min(28, _state.zoom + delta));
             redraw();
         });
         return b;
@@ -329,7 +328,7 @@ export function renderMapTab(container, opts = {}) {
     // Canvas wrap — relative so the hover tooltip can position over it; scrolls in both axes.
     const canvasWrap = document.createElement('div');
     canvasWrap.style.cssText = 'position:relative; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
-        + 'max-width:100%; max-height:24rem; overflow:auto; '
+        + 'max-width:100%; max-height:34rem; overflow:auto; '
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
@@ -382,16 +381,14 @@ export function renderMapTab(container, opts = {}) {
 
     // Legend
     const legend = document.createElement('div');
-    legend.style.cssText = 'font-size:0.68rem; color:#a89878; line-height:1.4; margin-bottom:0.3rem;';
+    legend.style.cssText = 'font-size:0.68rem; color:#a89878; line-height:1.5; margin-bottom:0.3rem;';
     legend.innerHTML = ''
-        + '<span style="color:#fcd040;">●</span> Natural wonder &nbsp; '
-        + '<span style="color:#7ec8e3;">▬</span> Minor river &nbsp; '
-        + '<span style="color:#4a90d0;">▬</span> Navigable river<br>'
-        + '<span style="color:#e84a3a;">■</span> Strategic &nbsp; '
-        + '<span style="color:#c060d0;">■</span> Luxury &nbsp; '
-        + '<span style="color:#a0e040;">■</span> Bonus &nbsp; '
-        + '<span style="color:#f4d240;">■</span> Treasure<br>'
-        + '<span>■</span> City (your color, ▲ unit) &nbsp; · &nbsp; hover = info, click = pan camera';
+        + sq('#e84a3a') + 'Strategic &nbsp; ' + sq('#c060d0') + 'Luxury &nbsp; '
+        + sq('#a0e040') + 'Bonus &nbsp; ' + sq('#f4d240') + 'Treasure &nbsp;·&nbsp; '
+        + sq('#fcd040') + 'Wonder<br>'
+        + bar('#7ec8e3') + 'Minor river &nbsp; ' + bar('#4a90d0') + 'Navigable &nbsp; '
+        + sq('#ccc') + 'City (your color) &nbsp; ' + tri('#ccc') + 'Unit &nbsp;·&nbsp; '
+        + 'hover = info, click = pan';
     container.appendChild(legend);
 
     const previewMsg = document.createElement('div');
@@ -459,7 +456,7 @@ export function renderMapTab(container, opts = {}) {
             const b = document.createElement('button');
             b.className = 'lcp-row-btn';
             b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.12rem 0.4rem; font-size:0.72rem;';
-            b.innerHTML = (dotColor ? '<span style="color:' + dotColor + ';">■</span> ' : '') + label;
+            b.innerHTML = (dotColor ? sq(dotColor) : '') + label;
             if (_state.spotlight.has(key)) b.classList.add('active');
             b.addEventListener('click', () => {
                 if (_state.spotlight.has(key)) { _state.spotlight.delete(key); b.classList.remove('active'); }
@@ -525,87 +522,5 @@ export function renderMapTab(container, opts = {}) {
     };
     redraw();
 
-    // ═══ Section 2: Map Paint (ON STANDBY — see docs/Minor_todos.md #3) ══
-    const paintSection = document.createElement('div');
-    paintSection.className = 'lcp-section';
-    paintSection.textContent = '── Map Paint (experimental) ──';
-    container.appendChild(paintSection);
-
-    const statusEl = document.createElement('div');
-    statusEl.className = 'lcp-row-msg';
-    statusEl.style.cssText = 'font-size:0.8em; line-height:1.3; color:#e6b800; margin:0.2rem 0 0.3rem 0; min-height:1.1em;';
-    const updateStatus = () => {
-        if (_state.type) statusEl.textContent = 'Selected: ' + _state.category + ' = ' + _state.type;
-        else statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type below, then click [Paint].';
-    };
-
-    const catRow = document.createElement('div');
-    catRow.className = 'lcp-row-btns';
-    catRow.style.marginBottom = '0.3rem';
-    const catBtns = {};
-    for (const cat of CATEGORIES) {
-        const b = document.createElement('button');
-        b.className = 'lcp-row-btn';
-        b.textContent = cat;
-        if (cat === _state.category) b.classList.add('active');
-        b.addEventListener('click', () => {
-            if (_state.category === cat) return;
-            _state.category = cat;
-            _state.type = null;
-            for (const c of CATEGORIES) catBtns[c].classList.toggle('active', c === cat);
-            populateTypes();
-            updateStatus();
-        });
-        catBtns[cat] = b;
-        catRow.appendChild(b);
-    }
-    container.appendChild(catRow);
-    container.appendChild(statusEl);
-
-    const paintBtn = document.createElement('button');
-    paintBtn.className = 'lcp-toggle-btn';
-    paintBtn.textContent = 'Paint at clicked tile';
-    paintBtn.style.marginBottom = '0.4rem';
-    paintBtn.addEventListener('click', () => {
-        if (!_state.type) { statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type first.'; return; }
-        api.enterPaintMode({ category: _state.category, typeString: _state.type }, { closePanel });
-    });
-    container.appendChild(paintBtn);
-
-    const typeListEl = document.createElement('div');
-    typeListEl.className = 'lcp-map-type-list';
-    typeListEl.style.cssText = 'display:flex; flex-wrap:wrap; max-height:15rem; overflow-y:auto; padding:0.15rem; gap:0.25rem;';
-    container.appendChild(typeListEl);
-
-    const populateTypes = () => {
-        typeListEl.innerHTML = '';
-        let types = [];
-        try { types = api.getMapPaintTypes(_state.category); } catch (e) { api.ERR('getMapPaintTypes failed:', e); }
-        if (!types || types.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'lcp-list-empty';
-            empty.textContent = '(no ' + _state.category.toLowerCase() + ' types found)';
-            typeListEl.appendChild(empty);
-            return;
-        }
-        for (const t of types) {
-            const b = document.createElement('button');
-            b.className = 'lcp-row-btn';
-            b.style.cssText = 'flex: 0 1 auto; margin: 0; padding: 0.15rem 0.4rem; text-align: left;';
-            b.textContent = t.name;
-            b.title = t.type;
-            if (t.type === _state.type) b.classList.add('active');
-            b.addEventListener('click', () => {
-                _state.type = t.type;
-                for (const child of typeListEl.children) child.classList.remove('active');
-                b.classList.add('active');
-                updateStatus();
-            });
-            typeListEl.appendChild(b);
-        }
-    };
-
-    populateTypes();
-    updateStatus();
-    api.LOG('rendered map tab (category=' + _state.category + ', zoom=' + _state.zoom + ', spotlight=' + _state.spotlight.size + ')');
+    api.LOG('rendered map tab (zoom=' + _state.zoom + ', spotlight=' + _state.spotlight.size + ')');
 }

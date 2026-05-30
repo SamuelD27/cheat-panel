@@ -6,7 +6,7 @@
 
 	<fxs-tab-bar class="cheat-tab-bar w-full mt-1" tab-style="flat" tab-for="" selected-tab-index="0"
 				 data-slot="header"
-				 tab-items='[{"id":"player","label":"LOC_LCP_CHEAT_TAB_PLAYER"},{"id":"units","label":"LOC_LCP_CHEAT_TAB_UNITS"},{"id":"cities","label":"LOC_LCP_CHEAT_TAB_CITIES"},{"id":"map","label":"LOC_LCP_CHEAT_TAB_MAP"},{"id":"research","label":"LOC_LCP_CHEAT_TAB_RESEARCH"}]'></fxs-tab-bar>
+				 tab-items='[{"id":"player","label":"LOC_LCP_CHEAT_TAB_PLAYER"},{"id":"units","label":"LOC_LCP_CHEAT_TAB_UNITS"},{"id":"cities","label":"LOC_LCP_CHEAT_TAB_CITIES"},{"id":"map","label":"LOC_LCP_CHEAT_TAB_MAP"},{"id":"creative","label":"LOC_LCP_CHEAT_TAB_CREATIVE"},{"id":"research","label":"LOC_LCP_CHEAT_TAB_RESEARCH"}]'></fxs-tab-bar>
 
 	<!-- PLAYER tab -->
 	<fxs-inner-frame class="cheat-tab cheat-tab-player flex flex-col items-stretch w-full px-3 py-4">
@@ -69,10 +69,15 @@
 		<div class="cheat-city-list"></div>
 	</fxs-inner-frame>
 
-	<!-- MAP tab (M5): paint terrain/feature/resource/biome on a clicked plot. The whole tab body is
-	     populated by tab-map.js (renderMapTab) — same pattern as the Units / Cities per-row lists. -->
+	<!-- MAP tab: read-only Map Preview minimap. The whole tab body is populated by tab-map.js
+	     (renderMapTab) — same pattern as the Units / Cities per-row lists. -->
 	<fxs-inner-frame class="cheat-tab cheat-tab-map flex flex-col items-stretch w-full px-3 py-4 hidden">
 		<div class="cheat-map-content"></div>
+	</fxs-inner-frame>
+
+	<!-- CREATIVE tab (M8): world-editing tools (Map Paint). Body populated by tab-creative.js. -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-creative flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<div class="cheat-creative-content"></div>
 	</fxs-inner-frame>
 
 	<!-- RESEARCH tab -->

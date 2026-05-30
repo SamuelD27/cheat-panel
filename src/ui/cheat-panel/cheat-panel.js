@@ -14,6 +14,7 @@ import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 import { renderUnitList } from '/base-standard/ui/cheat-panel/tab-units.js';
 import { renderCityList } from '/base-standard/ui/cheat-panel/tab-cities.js';
 import { renderMapTab } from '/base-standard/ui/cheat-panel/tab-map.js';
+import { renderCreativeTab } from '/base-standard/ui/cheat-panel/tab-creative.js';
 import { ensureListeners, isGlobalInfinite, toggleGlobalInfinite } from '/base-standard/ui/cheat-panel/shared/infinite-move.js';
 // Side-effect imports: each registers its custom INTERFACEMODE_LCP_* handler at module load.
 import '/base-standard/ui/cheat-panel/claim-tile-mode.js'; // M4.3 "Claim Tiles"
@@ -326,6 +327,9 @@ class ScreenCheatPanel extends Panel {
         this.mapContentEl = this.Root.querySelector(".cheat-map-content");
         this.refreshMapTab();
 
+        this.creativeContentEl = this.Root.querySelector(".cheat-creative-content");
+        this.refreshCreativeTab();
+
         this.infMoveBtn = this.Root.querySelector(".cheat-inf-move");
         if (this.infMoveBtn) {
             this.updateInfMoveBtn();
@@ -386,6 +390,7 @@ class ScreenCheatPanel extends Panel {
         if (id === 'units') this.refreshUnitList();
         if (id === 'cities') this.refreshCityList();
         if (id === 'map') this.refreshMapTab();
+        if (id === 'creative') this.refreshCreativeTab();
     }
 
     refreshUnitList() {
@@ -408,7 +413,12 @@ class ScreenCheatPanel extends Panel {
 
     refreshMapTab() {
         if (!this.mapContentEl) return;
-        renderMapTab(this.mapContentEl, { closePanel: () => this.close() });
+        renderMapTab(this.mapContentEl);
+    }
+
+    refreshCreativeTab() {
+        if (!this.creativeContentEl) return;
+        renderCreativeTab(this.creativeContentEl, { closePanel: () => this.close() });
     }
 
     updateInfMoveBtn() {
