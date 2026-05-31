@@ -355,7 +355,7 @@ export function renderMapTab(container) {
     const mkToggle = (key, label, title) => {
         const b = document.createElement('button');
         b.className = 'lcp-row-btn';
-        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem;';
+        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem;';
         b.textContent = label;
         if (title) b.title = title;
         if (_state.filters[key]) b.classList.add('active');
@@ -375,7 +375,7 @@ export function renderMapTab(container) {
     const mkZoom = (delta, label, title) => {
         const b = document.createElement('button');
         b.className = 'lcp-row-btn';
-        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem; min-width:2rem;';
+        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem; min-width:2rem;';
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
@@ -390,7 +390,7 @@ export function renderMapTab(container) {
 
     const refreshBtn = document.createElement('button');
     refreshBtn.className = 'lcp-row-btn';
-    refreshBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:0.92rem;';
+    refreshBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem;';
     refreshBtn.textContent = '↻';
     refreshBtn.title = 'Re-read the map (cache invalidated)';
     refreshBtn.addEventListener('click', () => { _snapshotCache = null; redraw(); });
@@ -458,7 +458,7 @@ export function renderMapTab(container) {
     // Legend — laid out as fixed-width chips (3 per line) via flex-wrap. (Inline text + <br> rendered
     // one-item-per-line in this Gameface build; an explicit chip grid is reliable.)
     const legend = document.createElement('div');
-    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:0.9rem; color:#a89878; '
+    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:1.2rem; color:#a89878; '
         + 'line-height:1.5; margin-bottom:0.3rem;';
     const legendItems = [
         sq('#e84a3a') + 'Strategic',

@@ -215,7 +215,18 @@ class ScreenCheatPanel extends Panel {
                 border: 1px solid #6e5a28 !important;
                 border-radius: 0.18rem !important;
                 overflow: hidden !important;
+                /* Count the 1px border INSIDE the width — otherwise a full-width button's border-box is
+                   ~2px wider than the content area and pokes past the dark panel edge (most visible on
+                   the sparse Research tab). */
+                box-sizing: border-box !important; max-width: 100% !important;
             }
+            /* Same border-box fix for our plain DOM buttons (full-width toggles, row buttons). */
+            .cheat-frame button { box-sizing: border-box !important; max-width: 100% !important; }
+            /* fxs-scrollable overlays a 1rem-wide (w-4) custom scrollbar track at the RIGHT edge of the
+               content area (absolutely positioned). The tabs' base px-3 (0.75rem) right padding is less
+               than that, so full-width buttons run under the track and look clipped on the right (left is
+               clear). Reserve a right gutter wider than the track on every tab. */
+            .cheat-frame .cheat-tab { padding-right: 1.6rem !important; }
             .cheat-frame fxs-button .fxs-button__bg--base     { background-image: none !important; background-color: #241d10 !important; }
             .cheat-frame fxs-button:hover .fxs-button__bg--base { background-color: #362c17 !important; }
             .cheat-frame fxs-button .fxs-button__bg--focus    { background-image: none !important; background-color: rgba(216,178,74,0.14) !important; }
