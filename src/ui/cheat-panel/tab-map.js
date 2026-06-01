@@ -562,11 +562,17 @@ export function renderMapTab(container) {
             l.textContent = text;
             spotListEl.appendChild(l);
         };
+        // Swatch is a color-coded LEFT BORDER on the button itself — not an inline-block <span>.
+        // Coherent Gameface in this build can't parse `display:inline-block` (logs 2 warnings per
+        // span) and, at this map's volume (~70 distinct resources/wonders), laying out 70 such
+        // inner spans in a flex-wrap scroll box hard-crashes the compositor. textContent + a border
+        // keeps each chip as cheap as a plain row button (M9-fix2).
         const addChip = (key, label, dotColor) => {
             const b = document.createElement('button');
             b.className = 'lcp-row-btn';
-            b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.14rem 0.45rem; font-size:0.82rem;';
-            b.innerHTML = (dotColor ? sq(dotColor) : '') + label;
+            b.style.cssText = 'flex:0 0 auto; margin:0; padding:0.14rem 0.45rem 0.14rem 0.4rem; font-size:0.82rem; '
+                + 'border-left:0.5rem solid ' + (dotColor || 'transparent') + ';';
+            b.textContent = label;
             if (_state.spotlight.has(key)) b.classList.add('active');
             b.addEventListener('click', () => {
                 if (_state.spotlight.has(key)) { _state.spotlight.delete(key); b.classList.remove('active'); }
