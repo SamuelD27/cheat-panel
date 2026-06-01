@@ -191,9 +191,25 @@ function computeMatchSet(snap, spotlight) {
     return set;
 }
 
-// Supersample factor: render the buffer at SS× the display size, then CSS-scale down so the slanted
-// hex edges are anti-aliased instead of stair-stepped. (image-rendering stays 'auto' for smoothing.)
-const SUPERSAMPLE = 2;
+// M9 originally rendered the buffer at 2× the display size and CSS-scaled it down for smoother hex
+// edges. That CSS-downscaled canvas (canvas.width ≠ style.width) crashes Coherent Gameface's
+// compositor on large maps (confirmed: hard crash opening the Map tab on a 104×64 modded map, no JS
+// error — M9-fix). We now render 1:1 (no downscale) and instead cap zoom so the backing store stays
+// within a safe pixel budget on any map size.
+const MAX_CANVAS_DIM = 4096;        // keep each canvas axis within Gameface's comfortable range
+const MAX_CANVAS_PX  = 8_000_000;   // and the total backing store bounded
+
+// Largest tileSize (px/tile) that keeps the canvas within MAX_CANVAS_DIM / MAX_CANVAS_PX for this map.
+function maxZoomForMap(W, H) {
+    if (!W || !H) return 34;
+    let z = 34;
+    while (z > 2) {
+        const { w, h } = hexCanvasSize(W, H, z);
+        if (w <= MAX_CANVAS_DIM && h <= MAX_CANVAS_DIM && w * h <= MAX_CANVAS_PX) break;
+        z -= 1;
+    }
+    return Math.max(2, z);
+}
 
 /** Paint the snapshot onto the canvas at the current zoom + filters + spotlight, as pointy-top hexes. */
 function drawMinimap(canvas, snap, opts) {
@@ -205,18 +221,19 @@ function drawMinimap(canvas, snap, opts) {
     if (!ctx) return;
 
     const { w: logW, h: logH } = hexCanvasSize(W, H, tileSize);
-    // Supersample only at small tile sizes (where stair-stepping shows); at large zoom the edges are
-    // already many px wide, so SS=1 keeps the buffer from ballooning on big maps.
-    const SS = tileSize >= 16 ? 1 : SUPERSAMPLE;
-    // Buffer is SS× larger; display (CSS) size is the logical size so the wrap hugs it 1:1.
-    canvas.width  = Math.ceil(logW * SS);
-    canvas.height = Math.ceil(logH * SS);
-    canvas.style.width    = Math.ceil(logW) + 'px';
-    canvas.style.height   = Math.ceil(logH) + 'px';
+    // Render 1:1 — the backing store matches the displayed size, so there is NO CSS downscale
+    // (canvas.width === style.width). Zoom is already clamped to maxZoomForMap() by the callers, so
+    // these dimensions are guaranteed within MAX_CANVAS_DIM / MAX_CANVAS_PX. Breadcrumb the size
+    // BEFORE the heavy draw so a future native crash still leaves the dimensions in the log.
+    const cw = Math.ceil(logW), ch = Math.ceil(logH);
+    api.LOG('drawMinimap ' + W + '×' + H + ' map → canvas ' + cw + '×' + ch + 'px (zoom ' + tileSize + ')');
+    canvas.width  = cw;
+    canvas.height = ch;
+    canvas.style.width    = cw + 'px';
+    canvas.style.height   = ch + 'px';
     canvas.style.maxWidth = 'none';
     canvas.style.flex     = '0 0 auto';
-    // Draw everything in LOGICAL coordinates; the transform scales up into the buffer.
-    ctx.setTransform(SS, 0, 0, SS, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.lineJoin = 'round';
 
     ctx.fillStyle = '#000';
@@ -597,11 +614,13 @@ export function renderMapTab(container) {
     // W+0.5 tiles wide (the +0.5 is the odd-row hex offset); fit to the content area minus the wrap
     // chrome (~12px padding+border). This removes the empty space beside smaller maps.
     const fitZoomToWidth = (W) => {
-        if (_state.userZoomed) return;
+        const H = _snapshotCache && _snapshotCache.height;
+        const zMax = Math.min(34, maxZoomForMap(W, H));   // never exceed the safe canvas budget
+        if (_state.userZoomed) { _state.zoom = Math.min(_state.zoom, zMax); return; }
         const avail = container.clientWidth;
         if (!avail || avail < 40 || !W) return;
         const z = Math.floor((avail - 12) / (W + 0.5));
-        if (z >= 2) _state.zoom = Math.max(2, Math.min(34, z));
+        if (z >= 2) _state.zoom = Math.max(2, Math.min(zMax, z));
     };
 
     const redraw = () => {
