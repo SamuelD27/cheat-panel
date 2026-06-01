@@ -26,6 +26,26 @@
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
+// ── Progress probe (TEMPORARY diagnostic, M9-fix3) ───────────────────────────
+// console.log from this panel's Gameface isolate does NOT reach UI.log, but the
+// engine DOES synchronously log "Trying to set maxWidth property to invalid value:
+// <x>" whenever we assign a non-length string to an element's style.maxWidth. We
+// abuse that as a breadcrumb: the LAST probe label seen in UI.log before a native
+// crash pinpoints how far drawMinimap got. Zero layout impact (hidden throwaway
+// div). REMOVE once the Map tab is verified stable on large/modded maps.
+let _probeEl = null, _probeDoc = null;
+function probe(stage, doc) {
+    try {
+        if (doc) _probeDoc = doc;
+        if (!_probeEl && _probeDoc) {
+            _probeEl = _probeDoc.createElement('div');
+            _probeEl.style.display = 'none';
+            (_probeDoc.body || _probeDoc.documentElement).appendChild(_probeEl);
+        }
+        if (_probeEl) _probeEl.style.maxWidth = stage;   // → "...invalid value: <stage>" in UI.log
+    } catch (_) { /* never let the probe itself throw */ }
+}
+
 const _state = {
     filters: { cities: true, resources: false, myUnits: true },
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
@@ -153,6 +173,19 @@ function hexPath(ctx, cx, cy, tileSize) {
     ctx.lineTo(cx - halfW, cy - hs);
     ctx.closePath();
 }
+// Like hexPath but appends to the CURRENT path WITHOUT beginPath(), so many hexes can be
+// accumulated into one path and filled in a single ctx.fill() (the M9-fix3 color-batching).
+function hexSubPath(ctx, cx, cy, tileSize) {
+    const { S, halfW } = hexMetrics(tileSize);
+    const hs = S / 2;
+    ctx.moveTo(cx, cy - S);
+    ctx.lineTo(cx + halfW, cy - hs);
+    ctx.lineTo(cx + halfW, cy + hs);
+    ctx.lineTo(cx, cy + S);
+    ctx.lineTo(cx - halfW, cy + hs);
+    ctx.lineTo(cx - halfW, cy - hs);
+    ctx.closePath();
+}
 // Inverse: logical pixel → plot, by nearest hex center over a small neighborhood (handles the
 // slanted hex edges correctly, unlike the old square floor()).
 function pxToPlot(cx, cy, W, H, tileSize) {
@@ -227,6 +260,7 @@ function drawMinimap(canvas, snap, opts) {
     // BEFORE the heavy draw so a future native crash still leaves the dimensions in the log.
     const cw = Math.ceil(logW), ch = Math.ceil(logH);
     api.LOG('drawMinimap ' + W + '×' + H + ' map → canvas ' + cw + '×' + ch + 'px (zoom ' + tileSize + ')');
+    probe('PROBE_1_BEFORE_SIZE', canvas.ownerDocument);
     canvas.width  = cw;
     canvas.height = ch;
     canvas.style.width    = cw + 'px';
@@ -235,60 +269,149 @@ function drawMinimap(canvas, snap, opts) {
     canvas.style.flex     = '0 0 auto';
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.lineJoin = 'round';
+    probe('PROBE_2_AFTER_SIZE');
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, logW, logH);
+    probe('PROBE_3_BG_DONE');
 
     const matchSet = computeMatchSet(snap, opts.spotlight);
     const { S, halfW } = hexMetrics(tileSize);
 
-    // Plots — fill each hex; a same-color hairline stroke closes anti-aliasing seams between hexes.
-    for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-            const p = snap.plots[y * W + x];
-            if (!p) continue;
-            const { cx, cy } = plotCenter(x, y, H, tileSize);
-            const col = colorForPlot(p);
-            hexPath(ctx, cx, cy, tileSize);
-            ctx.fillStyle = col;
-            ctx.fill();
-            ctx.strokeStyle = col;
-            ctx.lineWidth = 0.6;
-            ctx.stroke();
+    // ── BATCHED draw (M9-fix3) ──────────────────────────────────────────────
+    // M9 drew each of ~6656 plots as its OWN beginPath+fill+stroke (+a river stroke
+    // +an arc pip) — ~17–23k canvas commands in one synchronous frame, which overruns
+    // Coherent Gameface's 2D compositor and HARD-CRASHES the game on large/modded maps.
+    // (The engine itself never draws tiles in JS — its minimap is a live:/minimap GPU
+    // texture in a <div>.) We collapse all same-color hexes into ONE chunked fill, drop
+    // the per-hex stroke entirely, batch rivers into ≤2 strokes, and use fillRect for
+    // pips. ~17–23k ops → a few dozen. FILL_CHUNK caps any single path so one fill()
+    // can't get pathologically large either.
+    const FILL_CHUNK = 1024;
 
-            // River: a thin chord near the lower edges of the hex.
-            if (p.river === 1 || p.river === 2) {
-                ctx.strokeStyle = (p.river === 2) ? RIVER_NAV : RIVER_MINOR;
-                ctx.lineWidth = Math.max(1, tileSize * (p.river === 2 ? 0.18 : 0.12));
-                ctx.beginPath();
+    // Extreme-map safety valve: at tiny zoom the hex shape is invisible anyway, so drop
+    // to batched fillRect squares (M8's proven-cheap path) and skip rivers/pips.
+    const cheap = (tileSize < 4) || (W * H > 10000 && tileSize < 6);
+
+    probe('PROBE_4_BATCH_BEGIN');
+    if (cheap) {
+        const cheapBatches = new Map();   // color -> flat [px, py, ...]
+        for (let y = 0; y < H; y++) {
+            const rowBase = y * W;
+            for (let x = 0; x < W; x++) {
+                const p = snap.plots[rowBase + x];
+                if (!p) continue;
+                const { cx, cy } = plotCenter(x, y, H, tileSize);
+                const col = colorForPlot(p);
+                let arr = cheapBatches.get(col);
+                if (!arr) { arr = []; cheapBatches.set(col, arr); }
+                arr.push(cx - halfW, cy - S);
+            }
+        }
+        probe('PROBE_5_BATCH_FILL');
+        const cellW = tileSize, cellH = 2 * S;
+        for (const [col, arr] of cheapBatches) {
+            ctx.fillStyle = col;
+            for (let i = 0; i < arr.length; i += 2) ctx.fillRect(arr[i], arr[i + 1], cellW, cellH);
+        }
+        probe('PROBE_6_RIVERS');
+        probe('PROBE_7_WONDERS');
+    } else {
+        // 1) Bucket every plot's hex by its fill color.
+        const colorBatches = new Map();   // color -> flat [cx, cy, ...]
+        for (let y = 0; y < H; y++) {
+            const rowBase = y * W;
+            for (let x = 0; x < W; x++) {
+                const p = snap.plots[rowBase + x];
+                if (!p) continue;
+                const { cx, cy } = plotCenter(x, y, H, tileSize);
+                const col = colorForPlot(p);
+                let arr = colorBatches.get(col);
+                if (!arr) { arr = []; colorBatches.set(col, arr); }
+                arr.push(cx, cy);
+            }
+        }
+        probe('PROBE_5_BATCH_FILL');
+        // 2) One chunked fill per color (NO per-hex stroke — abutting fills define the
+        //    tile edges on their own). Flush every FILL_CHUNK hexes so a single path stays bounded.
+        for (const [col, arr] of colorBatches) {
+            ctx.fillStyle = col;
+            let n = 0;
+            ctx.beginPath();
+            for (let i = 0; i < arr.length; i += 2) {
+                hexSubPath(ctx, arr[i], arr[i + 1], tileSize);
+                if (++n >= FILL_CHUNK) { ctx.fill(); ctx.beginPath(); n = 0; }
+            }
+            if (n > 0) ctx.fill();
+        }
+        // 3) Rivers — at most 2 strokes total (one per class), each a single batched path.
+        const minorPts = [], navPts = [];
+        for (let y = 0; y < H; y++) {
+            const rowBase = y * W;
+            for (let x = 0; x < W; x++) {
+                const p = snap.plots[rowBase + x];
+                if (!p || !p.river) continue;
+                const { cx, cy } = plotCenter(x, y, H, tileSize);
+                (p.river === 2 ? navPts : minorPts).push(cx, cy);
+            }
+        }
+        const strokeRivers = (pts, color, wMul) => {
+            if (!pts.length) return;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = Math.max(1, tileSize * wMul);
+            ctx.beginPath();
+            for (let i = 0; i < pts.length; i += 2) {
+                const cx = pts[i], cy = pts[i + 1];
                 ctx.moveTo(cx - halfW * 0.8, cy + S * 0.55);
                 ctx.lineTo(cx + halfW * 0.8, cy + S * 0.55);
-                ctx.stroke();
             }
-
-            if (p.nw) {
-                ctx.fillStyle = NW_FILL;
-                const pip = Math.max(2, tileSize * 0.5);
-                ctx.beginPath();
-                ctx.arc(cx, cy, pip / 2, 0, Math.PI * 2);
-                ctx.fill();
+            ctx.stroke();
+        };
+        strokeRivers(minorPts, RIVER_MINOR, 0.12);
+        strokeRivers(navPts, RIVER_NAV, 0.18);
+        probe('PROBE_6_RIVERS');
+        // 4) Natural-wonder pips — fillRect (cheap) instead of one arc() per pip.
+        const pip = Math.max(2, tileSize * 0.5), pipHalf = pip / 2;
+        ctx.fillStyle = NW_FILL;
+        for (let y = 0; y < H; y++) {
+            const rowBase = y * W;
+            for (let x = 0; x < W; x++) {
+                const p = snap.plots[rowBase + x];
+                if (!p || !p.nw) continue;
+                const { cx, cy } = plotCenter(x, y, H, tileSize);
+                ctx.fillRect(cx - pipHalf, cy - pipHalf, pip, pip);
             }
         }
+        probe('PROBE_7_WONDERS');
     }
 
-    // Resources — center dot.
+    // ── Resources — batched by class color into one (chunked) fill per class. Modded
+    //    maps can have very many resource tiles, so do NOT draw one arc()+fill() per dot. ──
     if (filters.resources && snap.resources?.length) {
+        const rad = Math.max(1.5, tileSize * 0.26);
+        const byCls = new Map();   // color -> flat [x, y, ...]
         for (const r of snap.resources) {
-            const { cx, cy } = plotCenter(r.x, r.y, H, tileSize);
-            const rad = Math.max(1.5, tileSize * 0.26);
-            ctx.fillStyle = colorForResource(r.cls);
+            const col = colorForResource(r.cls);
+            let arr = byCls.get(col);
+            if (!arr) { arr = []; byCls.set(col, arr); }
+            arr.push(r.x, r.y);
+        }
+        for (const [col, arr] of byCls) {
+            ctx.fillStyle = col;
+            let n = 0;
             ctx.beginPath();
-            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-            ctx.fill();
+            for (let i = 0; i < arr.length; i += 2) {
+                const { cx, cy } = plotCenter(arr[i], arr[i + 1], H, tileSize);
+                ctx.moveTo(cx + rad, cy);
+                ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+                if (++n >= FILL_CHUNK) { ctx.fill(); ctx.beginPath(); n = 0; }
+            }
+            if (n > 0) ctx.fill();
         }
     }
+    probe('PROBE_8_RESOURCES');
 
-    // Cities — filled hex in the civ color with an outline (white = capital).
+    // ── Cities — filled hex + outline (few; kept per-shape, hexPath OK here). ──
     if (filters.cities && snap.cities?.length) {
         for (const c of snap.cities) {
             const { cx, cy } = plotCenter(c.x, c.y, H, tileSize);
@@ -300,8 +423,9 @@ function drawMinimap(canvas, snap, opts) {
             ctx.stroke();
         }
     }
+    probe('PROBE_9_CITIES');
 
-    // My units — filled triangles in the local civ's color (drawn last so they sit on top).
+    // ── My units — filled triangles on top (few; kept per-shape). ──
     if (filters.myUnits && snap.myUnits?.length) {
         for (const u of snap.myUnits) {
             const { cx, cy } = plotCenter(u.x, u.y, H, tileSize);
@@ -318,27 +442,36 @@ function drawMinimap(canvas, snap, opts) {
             ctx.stroke();
         }
     }
+    probe('PROBE_10_UNITS');
 
-    // Spotlight: dim every NON-matching hex so matches pop; ring the matches in gold.
+    // ── Spotlight: ONE chunked fill for all dimmed non-matches, ONE stroke for all rings. ──
     if (matchSet) {
         ctx.fillStyle = 'rgba(6,5,3,0.80)';
+        let n = 0;
+        ctx.beginPath();
         for (let y = 0; y < H; y++) {
+            const rowBase = y * W;
             for (let x = 0; x < W; x++) {
-                if (matchSet.has(y * W + x)) continue;
+                if (matchSet.has(rowBase + x)) continue;
+                if (!snap.plots[rowBase + x]) continue;
                 const { cx, cy } = plotCenter(x, y, H, tileSize);
-                hexPath(ctx, cx, cy, tileSize);
-                ctx.fill();
+                hexSubPath(ctx, cx, cy, tileSize);
+                if (++n >= FILL_CHUNK) { ctx.fill(); ctx.beginPath(); n = 0; }
             }
         }
+        if (n > 0) ctx.fill();
+
         ctx.strokeStyle = '#ffe680';
         ctx.lineWidth = Math.max(1, tileSize * 0.16);
+        ctx.beginPath();
         for (const i of matchSet) {
             const x = i % W, y = (i - x) / W;
             const { cx, cy } = plotCenter(x, y, H, tileSize);
-            hexPath(ctx, cx, cy, tileSize * 0.92);
-            ctx.stroke();
+            hexSubPath(ctx, cx, cy, tileSize * 0.92);
         }
+        ctx.stroke();
     }
+    probe('PROBE_11_SPOTLIGHT');
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
