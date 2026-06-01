@@ -312,23 +312,47 @@ function ownerCityIdAt(loc) {
     } catch (_) { return undefined; }
 }
 
-// Claim an arbitrary plot for a city with NO radius / pending-growth gate, via city.purchasePlot — the
-// same call the in-game tuner's City panel "PurchasePlot" tool makes (base ui/tuner-input/tuner-input.js),
-// so it is callable from this UI isolate (unlike the maps-only Growth.claimPlot, which is likely inert
-// here per the M3 Units.create lesson). Accepts a city ComponentID or a live city object. Logs the
-// plot owner before/after so we can confirm in-game whether purchasePlot escapes the 3-ring radius.
+// Claim an arbitrary plot for a city at ANY distance, with NO radius / growth / gold gate.
+//
+// We use WorldBuilder.MapPlots.setOwnership(player, loc) — the in-game tuner's MapPanel "PlotOwnership"
+// tool (base ui/tuner-input/tuner-input.js:96), callable from this UI isolate and with no distance cap.
+// We deliberately do NOT use city.purchasePlot here: that is the engine's expansion-PURCHASE path, gated
+// to the city's canStart(EXPAND).Plots set (growth/ring/gold-limited — verified against
+// model-place-population.js:91 + interface-mode-acquire-tile.js:295,:340), so it only ever reached
+// nearby tiles on a developed city. That gate — not our code — is the "unlimited distance" regression;
+// claimPlotForCity itself is byte-for-byte the M4.3 version otherwise. setOwnership is PLAYER-level: it
+// extends your civ border to any tile you click (reversible via setOwnership(PlayerIds.NO_PLAYER, loc)).
+// A far exclave tile may not be actively worked by the city — the accepted trade for true unlimited reach
+// (territory-only, per the user's choice; the alternative was placing a rural district to force a work
+// attachment). purchasePlot is kept ONLY as a fallback if WorldBuilder is somehow unavailable here.
+// Accepts a city ComponentID or a live city object; logs the owning-city before/after.
 export function claimPlotForCity(cityOrID, loc) {
     if (!guardSP()) return false;
+    if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('claimPlotForCity: bad loc', loc); return false; }
     try {
         const city = (cityOrID && typeof cityOrID.purchasePlot === 'function') ? cityOrID : Cities.get(cityOrID);
         if (!city) { ERR('claimPlotForCity: no city for', cityOrID); return false; }
-        if (typeof city.purchasePlot !== 'function') { ERR('claimPlotForCity: city.purchasePlot is not a function'); return false; }
+        const owner = (city.id && city.id.owner != null) ? city.id.owner : GameContext.localPlayerID;
         const before = ownerCityIdAt(loc);
-        city.purchasePlot(loc);
-        const after = ownerCityIdAt(loc);
-        LOG('claimPlotForCity: purchasePlot (' + loc.x + ',' + loc.y + ') for city', city.id?.id,
-            '| owning-city before:', before, 'after:', after);
-        return true;
+
+        if (typeof WorldBuilder !== 'undefined' && WorldBuilder.MapPlots && typeof WorldBuilder.MapPlots.setOwnership === 'function') {
+            WorldBuilder.MapPlots.setOwnership(owner, loc);   // unlimited distance, no ring/growth/gold gate
+            const after = ownerCityIdAt(loc);
+            LOG('claimPlotForCity: setOwnership(player ' + owner + ') (' + loc.x + ',' + loc.y + ') for city', city.id?.id,
+                '| owning-city before:', before, 'after:', after);
+            return true;
+        }
+
+        // Fallback only (WorldBuilder missing in this isolate): the old in-range purchase path.
+        if (typeof city.purchasePlot === 'function') {
+            city.purchasePlot(loc);
+            const after = ownerCityIdAt(loc);
+            LOG('claimPlotForCity: WorldBuilder unavailable — fell back to purchasePlot (' + loc.x + ',' + loc.y + ')',
+                '| owning-city before:', before, 'after:', after);
+            return true;
+        }
+        ERR('claimPlotForCity: neither WorldBuilder.setOwnership nor city.purchasePlot available');
+        return false;
     } catch (e) { ERR('claimPlotForCity failed:', e); return false; }
 }
 
