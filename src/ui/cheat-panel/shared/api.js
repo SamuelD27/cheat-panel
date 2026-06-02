@@ -385,6 +385,12 @@ export function addPopulationAll(amount) { if (!guardSP()) return; for (const c 
 // takes a third "amount" argument (the resource count); the tuner passes 1 for the normal case, 0 to
 // erase — we default to 1.
 //
+// Sentinel "type" for the Resource category meaning "clear/remove the resource on the clicked tile".
+// Surfaced as the first entry in the Resource type list (getMapPaintTypes) and handled specially in
+// paintPlot via WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0) — the tuner's
+// erase path (base tuner-input.js:171).
+export const CLEAR_RESOURCE = '__LCP_CLEAR_RESOURCE__';
+
 // Enumerates all types in a paint category for the type-picker list. Returns [{type, name}] where
 // `type` is the *Type string (e.g. "TERRAIN_GRASS") and `name` is the localized display label.
 // GameInfo.{Terrains,Features,Resources,Biomes} are the gameplay tables exposed to the UI isolate
@@ -404,26 +410,54 @@ export function getMapPaintTypes(category) {
             out.push({ type, name });
         }
         out.sort((a, b) => a.name.localeCompare(b.name));
+        // Offer "clear resource" at the top of the Resource list (Item 3 — Resource DELETE).
+        if (category === 'Resource') out.unshift({ type: CLEAR_RESOURCE, name: '(Clear / remove resource)' });
     } catch (e) { ERR('getMapPaintTypes failed for', category, e); }
     return out;
 }
 
-// Apply a single paint to one plot. Dispatches to the correct WorldBuilder.MapPlots.set* per category.
+// Re-read the current *Type STRING at a plot for a paint category (write-confirmation). null = none.
+// The DATA layer updates synchronously even though the terrain MESH redraw is deferred, so this is a
+// reliable check that a paint actually stuck (the engine silently rejects illegal combos).
+function readPaintType(category, loc) {
+    try {
+        const x = loc.x, y = loc.y;
+        switch (category) {
+            case 'Terrain':  return GameInfo?.Terrains?.lookup?.(GameplayMap.getTerrainType(x, y))?.TerrainType ?? null;
+            case 'Feature':  return GameInfo?.Features?.lookup?.(GameplayMap.getFeatureType(x, y))?.FeatureType ?? null;
+            case 'Resource': return GameInfo?.Resources?.lookup?.(GameplayMap.getResourceType(x, y))?.ResourceType ?? null;
+            case 'Biome':    return GameInfo?.Biomes?.lookup?.(GameplayMap.getBiomeType(x, y))?.BiomeType ?? null;
+        }
+    } catch (_) {}
+    return null;
+}
+
+// Apply a single paint to one plot (or CLEAR a resource when typeString === CLEAR_RESOURCE). Dispatches
+// to WorldBuilder.MapPlots.set* per category, then READS THE PLOT BACK and returns true only if the value
+// actually stuck — so the caller can flash green on success / red on a silent engine rejection.
 export function paintPlot(category, typeString, loc) {
     if (!guardSP()) return false;
     if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('paintPlot: bad loc', loc); return false; }
     if (!typeString) { ERR('paintPlot: no type string'); return false; }
     try {
-        const hash = Database.makeHash(typeString);
-        switch (category) {
-            case 'Terrain':  WorldBuilder.MapPlots.setTerrain(hash, loc); break;
-            case 'Feature':  WorldBuilder.MapPlots.setFeature(hash, loc); break;
-            case 'Resource': WorldBuilder.MapPlots.setResource(hash, loc, 1); break;
-            case 'Biome':    WorldBuilder.MapPlots.setBiome(hash, loc); break;
-            default: ERR('paintPlot: unknown category', category); return false;
+        const clearing = (category === 'Resource' && typeString === CLEAR_RESOURCE);
+        if (clearing) {
+            WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0);
+        } else {
+            const hash = Database.makeHash(typeString);
+            switch (category) {
+                case 'Terrain':  WorldBuilder.MapPlots.setTerrain(hash, loc); break;
+                case 'Feature':  WorldBuilder.MapPlots.setFeature(hash, loc); break;
+                case 'Resource': WorldBuilder.MapPlots.setResource(hash, loc, 1); break;
+                case 'Biome':    WorldBuilder.MapPlots.setBiome(hash, loc); break;
+                default: ERR('paintPlot: unknown category', category); return false;
+            }
         }
-        LOG('paint', category, typeString, 'at (' + loc.x + ',' + loc.y + ')');
-        return true;
+        // Confirm the write stuck (engine silently drops illegal combos / out-of-domain features).
+        const got = readPaintType(category, loc);
+        const ok = clearing ? (got == null) : (got === typeString);
+        LOG('paint', category, (clearing ? 'CLEAR' : typeString), 'at (' + loc.x + ',' + loc.y + ') ->', ok ? 'OK' : ('rejected; now ' + got));
+        return ok;
     } catch (e) { ERR('paintPlot failed:', e); return false; }
 }
 

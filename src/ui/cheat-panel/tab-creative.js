@@ -2,11 +2,13 @@
  * @file tab-creative.js
  * @description CREATIVE tab — world-editing tools that paint onto the map.
  *
- *   Map Paint (M5) — ON STANDBY (see docs/Minor_todos.md #3). The UI lives here (moved out of the Map
- *   tab in M8 so the Map Preview minimap can use the full panel width). Pick a category + type, then
- *   [Paint at clicked tile] closes the panel and enters INTERFACEMODE_LCP_PAINT_TILE; every plot click
- *   applies the current paint via WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}. Known
- *   issues: the exit cue (Esc/right-click works but isn't obvious) and feature-placement rejections.
+ *   Map Paint. The UI lives here (moved out of the Map tab in M8 so the Map Preview minimap can use the
+ *   full panel width). Pick a category + type, then [Paint at clicked tile] closes the panel and enters
+ *   INTERFACEMODE_LCP_PAINT_TILE; every plot click applies the current paint via
+ *   WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}, with a read-back so the click flashes
+ *   GREEN (value stuck) or RED (engine rejected the combo). The Resource category includes a
+ *   "(Clear / remove resource)" entry (api.CLEAR_RESOURCE) that erases via setResource(NO_RESOURCE,…,0).
+ *   Exit is the shared LcpPlotMode banner / Esc / right-click (Item 2).
  *
  * Module-level _state keeps the category/type selection across tab switches in a single session.
  */
@@ -39,16 +41,19 @@ export function renderCreativeTab(container, opts = {}) {
 
     const intro = document.createElement('div');
     intro.style.cssText = 'font-size:0.7rem; color:#8a7c5c; margin-bottom:0.3rem; line-height:1.35;';
-    intro.textContent = 'Paint terrain / feature / resource / biome onto a clicked tile. '
-        + 'Esc or right-click exits paint mode. (Terrain may only redraw after a camera move / next turn.)';
+    intro.textContent = 'Paint terrain / feature / resource / biome onto a clicked tile. The Resource list '
+        + 'includes "(Clear / remove resource)" to erase a tile\'s resource. Green flash = applied, red = '
+        + 'engine rejected. Esc / right-click / Exit button leaves. Terrain may only redraw after a camera move / next turn.';
     container.appendChild(intro);
 
     const statusEl = document.createElement('div');
     statusEl.className = 'lcp-row-msg';
     statusEl.style.cssText = 'font-size:0.8em; line-height:1.3; color:#e6b800; margin:0.2rem 0 0.3rem 0; min-height:1.1em;';
     const updateStatus = () => {
-        if (_state.type) statusEl.textContent = 'Selected: ' + _state.category + ' = ' + _state.type;
-        else statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type below, then click [Paint].';
+        if (_state.type) {
+            const label = (_state.type === api.CLEAR_RESOURCE) ? 'Clear resource' : _state.type;
+            statusEl.textContent = 'Selected: ' + _state.category + ' = ' + label;
+        } else statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type below, then click [Paint].';
     };
 
     const catRow = document.createElement('div');

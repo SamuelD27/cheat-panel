@@ -36,6 +36,9 @@ const HOVER_FILL  = { x: 1.0, y: 0.95, z: 0.3, w: 0.30 };
 const HOVER_EDGE  = { x: 1.0, y: 0.95, z: 0.0, w: 0.90 };
 const COMMIT_FILL = { x: 0.2, y: 1.0,  z: 0.4, w: 0.45 };
 const COMMIT_EDGE = { x: 0.0, y: 0.6,  z: 0.2, w: 1.00 };
+// Red flash when paintPlot's read-back reports the engine rejected the paint (illegal combo, etc.).
+const REJECT_FILL = { x: 1.0, y: 0.25, z: 0.2, w: 0.45 };
+const REJECT_EDGE = { x: 0.8, y: 0.0,  z: 0.0, w: 1.00 };
 
 // Extends LcpPlotMode (shared clean-exit handleInput + exit banner). See lcp-plot-mode-base.js.
 class LcpPaintTileMode extends LcpPlotMode {
@@ -47,8 +50,9 @@ class LcpPaintTileMode extends LcpPlotMode {
             api.ERR('paint-tile-mode: missing Category/TypeString in context — refusing to enter');
             return false;
         }
-        this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeString;
-        this.hintText = 'Click tiles to paint.';
+        const typeLabel = (typeString === api.CLEAR_RESOURCE) ? 'Clear resource' : typeString;
+        this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeLabel;
+        this.hintText = 'Click tiles to paint. Green flash = applied, red = engine rejected.';
         this.hintNote = '(terrain redraws after a camera move or the next turn)';
         api.LOG('paint-tile-mode: entered (' + category + ' = ' + typeString + '); click tiles to paint, Esc/right-click to exit');
         return true;
@@ -113,9 +117,10 @@ class LcpPaintTileMode extends LcpPlotMode {
     }
 
     /**
-     * @override — paint the plot AND flash a green overlay for ~2s so the click is visibly confirmed.
-     * The engine often doesn't refresh terrain mesh immediately (camera-pan or end-turn redraws it),
-     * so this is our only reliable per-click feedback.
+     * @override — paint the plot AND flash for ~2s so the click is visibly confirmed: GREEN if
+     * api.paintPlot's read-back shows the value stuck, RED if the engine silently rejected it. The
+     * engine often doesn't refresh terrain mesh immediately (camera-pan or end-turn redraws it), so the
+     * flash is our reliable per-click feedback.
      */
     commitPlot(plot) {
         const category   = this.Context?.Category;
@@ -123,11 +128,13 @@ class LcpPaintTileMode extends LcpPlotMode {
         if (!category || !typeString) return;
 
         const ok = api.paintPlot(category, typeString, { x: plot.x, y: plot.y });
-        if (!ok || !this._activeOverlay) return;
+        if (!this._activeOverlay) return;
+        const fillColor = ok ? COMMIT_FILL : REJECT_FILL;
+        const edgeColor = ok ? COMMIT_EDGE : REJECT_EDGE;
 
         try {
             const flash = this._activeOverlay.addPlotOverlay();
-            flash.addPlots([GameplayMap.getIndexFromLocation(plot)], { fillColor: COMMIT_FILL, edgeColor: COMMIT_EDGE });
+            flash.addPlots([GameplayMap.getIndexFromLocation(plot)], { fillColor, edgeColor });
             if (!this._flashTimers) this._flashTimers = [];
             const t = setTimeout(() => {
                 try { flash.clearAll(); } catch (_) {}
