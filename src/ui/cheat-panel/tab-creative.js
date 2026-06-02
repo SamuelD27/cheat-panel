@@ -14,7 +14,7 @@
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
-const CATEGORIES = ['Terrain', 'Feature', 'Resource', 'Biome'];
+const CATEGORIES = ['Terrain', 'Feature', 'Resource', 'Biome', 'Wonder'];
 
 const _state = {
     category: 'Terrain',
@@ -41,9 +41,10 @@ export function renderCreativeTab(container, opts = {}) {
 
     const intro = document.createElement('div');
     intro.style.cssText = 'font-size:0.7rem; color:#8a7c5c; margin-bottom:0.3rem; line-height:1.35;';
-    intro.textContent = 'Paint terrain / feature / resource / biome onto a clicked tile. The Resource list '
-        + 'includes "(Clear / remove resource)" to erase a tile\'s resource. Green flash = applied, red = '
-        + 'engine rejected. Esc / right-click / Exit button leaves. Terrain may only redraw after a camera move / next turn.';
+    intro.textContent = 'Paint terrain / feature / resource / biome / natural wonder onto a clicked tile. '
+        + 'Resource has "(Clear / remove resource)". Wonder preps the tile\'s terrain+biome then places the '
+        + 'wonder (single-tile wonders only — multi-tile are flagged "not placeable"). Green flash = applied, '
+        + 'red = engine rejected. Esc / right-click / Exit leaves. Terrain may redraw only after a camera move / next turn.';
     container.appendChild(intro);
 
     const statusEl = document.createElement('div');

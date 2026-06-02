@@ -391,12 +391,52 @@ export function addPopulationAll(amount) { if (!guardSP()) return; for (const c 
 // erase path (base tuner-input.js:171).
 export const CLEAR_RESOURCE = '__LCP_CLEAR_RESOURCE__';
 
+// Set of FeatureType strings that are natural wonders (have a Feature_NaturalWonders row). Cached. Used
+// to hide natural wonders from the generic Feature list (they need terrain/biome prep — see the Wonder
+// category) so the user doesn't keep getting silent red on them.
+let _nwSet = null;
+function naturalWonderTypeSet() {
+    if (_nwSet) return _nwSet;
+    const s = new Set();
+    try { for (const r of GameInfo.Feature_NaturalWonders) if (r.FeatureType) s.add(r.FeatureType); } catch (_) {}
+    _nwSet = s;
+    return s;
+}
+
+// List natural wonders for the Wonder paint category: {type, name, tiles, terrain, biome}. Single-tile
+// wonders sort first — they are the only ones the panel can plausibly place. Multi-tile wonders are
+// shape-anchored by the map-gen-only TerrainBuilder (unreachable from the UI isolate), so they're listed
+// but flagged unsupported.
+export function getNaturalWonderTypes() {
+    const out = [];
+    try {
+        if (typeof GameInfo === 'undefined' || !GameInfo.Feature_NaturalWonders) return out;
+        const terr = Object.create(null), biome = Object.create(null), names = Object.create(null);
+        try { for (const r of GameInfo.Features) if (r.FeatureType) names[r.FeatureType] = (r.Name ? Locale.compose(r.Name) : r.FeatureType); } catch (_) {}
+        try { for (const r of GameInfo.Feature_ValidTerrains) if (r.FeatureType && !(r.FeatureType in terr)) terr[r.FeatureType] = r.TerrainType; } catch (_) {}
+        try { for (const r of GameInfo.Feature_ValidBiomes) if (r.FeatureType && !(r.FeatureType in biome)) biome[r.FeatureType] = r.BiomeType; } catch (_) {}
+        for (const nw of GameInfo.Feature_NaturalWonders) {
+            const type = nw.FeatureType; if (!type) continue;
+            out.push({ type, name: names[type] || type, tiles: nw.Tiles ?? 1, terrain: terr[type] || null, biome: biome[type] || null });
+        }
+        out.sort((a, b) => (a.tiles - b.tiles) || a.name.localeCompare(b.name));
+    } catch (e) { ERR('getNaturalWonderTypes failed:', e); }
+    return out;
+}
+
 // Enumerates all types in a paint category for the type-picker list. Returns [{type, name}] where
 // `type` is the *Type string (e.g. "TERRAIN_GRASS") and `name` is the localized display label.
 // GameInfo.{Terrains,Features,Resources,Biomes} are the gameplay tables exposed to the UI isolate
 // (verified in base ui/* code: GameInfo.Terrains.lookup, GameInfo.Resources.lookup, etc.).
 export function getMapPaintTypes(category) {
     const out = [];
+    // The Wonder category is special: natural wonders come from Feature_NaturalWonders, not a flat table.
+    if (category === 'Wonder') {
+        return getNaturalWonderTypes().map(w => ({
+            type: w.type,
+            name: (w.tiles > 1) ? (w.name + ' — ' + w.tiles + '-tile (not placeable)') : w.name,
+        }));
+    }
     const tableKey = { Terrain: 'Terrains', Feature: 'Features', Resource: 'Resources', Biome: 'Biomes' }[category];
     const colKey   = { Terrain: 'TerrainType', Feature: 'FeatureType', Resource: 'ResourceType', Biome: 'BiomeType' }[category];
     if (!tableKey || !colKey) { ERR('getMapPaintTypes: unknown category', category); return out; }
@@ -405,6 +445,7 @@ export function getMapPaintTypes(category) {
         for (const row of GameInfo[tableKey]) {
             const type = row[colKey];
             if (!type) continue;
+            if (category === 'Feature' && naturalWonderTypeSet().has(type)) continue;  // NWs live in the Wonder category
             let name = type;
             try { if (row.Name) name = Locale.compose(row.Name); } catch (_) { /* keep raw string */ }
             out.push({ type, name });
@@ -440,6 +481,7 @@ export function paintPlot(category, typeString, loc) {
     if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('paintPlot: bad loc', loc); return false; }
     if (!typeString) { ERR('paintPlot: no type string'); return false; }
     try {
+        if (category === 'Wonder') return placeNaturalWonder(typeString, loc);
         const clearing = (category === 'Resource' && typeString === CLEAR_RESOURCE);
         if (clearing) {
             WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0);
@@ -459,6 +501,45 @@ export function paintPlot(category, typeString, loc) {
         LOG('paint', category, (clearing ? 'CLEAR' : typeString), 'at (' + loc.x + ',' + loc.y + ') ->', ok ? 'OK' : ('rejected; now ' + got));
         return ok;
     } catch (e) { ERR('paintPlot failed:', e); return false; }
+}
+
+// Place a SINGLE-TILE natural wonder at `loc` (Item 3 milestone 2). NW placement is gated natively on the
+// tile's terrain+biome (WorldBuilder.MapPlots.setFeature validates), so we PREP the tile to the wonder's
+// valid terrain+biome first, then set the feature, then confirm via GameplayMap.isNaturalWonder. Multi-tile
+// wonders can't be anchored from the UI isolate (only the map-gen-only TerrainBuilder does that), so they
+// just fail the read-back (red). Returns true only when the wonder actually landed.
+let _tbProbed = false;
+export function placeNaturalWonder(featureType, loc) {
+    if (!guardSP()) return false;
+    if (!featureType || !loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('placeNaturalWonder: bad args', featureType, loc); return false; }
+    try {
+        // One-time probe (console.error reaches UI.log from the interface-mode context): is the shape-aware
+        // map-gen placer reachable here? Expected 'undefined' — confirms multi-tile is not feasible.
+        if (!_tbProbed) {
+            _tbProbed = true;
+            try { ERR('placeNaturalWonder probe: typeof TerrainBuilder =', typeof TerrainBuilder,
+                '; setFeatureType =', (typeof TerrainBuilder !== 'undefined' ? typeof TerrainBuilder.setFeatureType : 'n/a')); } catch (_) {}
+        }
+        // Look up this wonder's required terrain + biome + tile count.
+        let terrain = null, biome = null, tiles = 1;
+        try {
+            for (const r of GameInfo.Feature_ValidTerrains) if (r.FeatureType === featureType) { terrain = r.TerrainType; break; }
+            for (const r of GameInfo.Feature_ValidBiomes)   if (r.FeatureType === featureType) { biome = r.BiomeType; break; }
+            for (const r of GameInfo.Feature_NaturalWonders) if (r.FeatureType === featureType) { tiles = r.Tiles ?? 1; break; }
+        } catch (_) {}
+        // Prep the tile so setFeature's terrain/biome validation passes, then place the wonder feature.
+        if (terrain) WorldBuilder.MapPlots.setTerrain(Database.makeHash(terrain), loc);
+        if (biome)   WorldBuilder.MapPlots.setBiome(Database.makeHash(biome), loc);
+        WorldBuilder.MapPlots.setFeature(Database.makeHash(featureType), loc);
+        // Confirm via the feature round-trip + the engine's own natural-wonder flag.
+        const got = GameInfo?.Features?.lookup?.(GameplayMap.getFeatureType(loc.x, loc.y))?.FeatureType ?? null;
+        let isNW = false;
+        try { isNW = (typeof GameplayMap.isNaturalWonder === 'function') && GameplayMap.isNaturalWonder(loc.x, loc.y) === true; } catch (_) {}
+        const ok = (got === featureType);
+        LOG('placeNaturalWonder', featureType, '(' + tiles + '-tile) at (' + loc.x + ',' + loc.y + ') terrain', terrain, 'biome', biome,
+            '| feature now', got, '| isNaturalWonder', isNW, '->', ok ? 'OK' : 'rejected');
+        return ok;
+    } catch (e) { ERR('placeNaturalWonder failed:', e); return false; }
 }
 
 // Enter the custom paint map-click mode (INTERFACEMODE_LCP_PAINT_TILE, registered in paint-tile-mode.js).
