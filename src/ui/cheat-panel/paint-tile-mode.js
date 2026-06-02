@@ -27,7 +27,7 @@
  *   set*() rejected the paint (we only flash on success). The actual terrain visual refresh remains
  *   an engine-side limitation; end-turn or camera-pan over the plot will redraw it.
  */
-import ChoosePlotInterfaceMode from '/base-standard/ui/interface-modes/interface-mode-choose-plot.js';
+import LcpPlotMode from '/base-standard/ui/cheat-panel/lcp-plot-mode-base.js';
 import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
@@ -37,8 +37,9 @@ const HOVER_EDGE  = { x: 1.0, y: 0.95, z: 0.0, w: 0.90 };
 const COMMIT_FILL = { x: 0.2, y: 1.0,  z: 0.4, w: 0.45 };
 const COMMIT_EDGE = { x: 0.0, y: 0.6,  z: 0.2, w: 1.00 };
 
-class LcpPaintTileMode extends ChoosePlotInterfaceMode {
-    /** @override — accept the mode only if a category + type string were supplied. */
+// Extends LcpPlotMode (shared clean-exit handleInput + exit banner). See lcp-plot-mode-base.js.
+class LcpPaintTileMode extends LcpPlotMode {
+    /** @override — accept the mode only if a category + type string were supplied; set exit-banner text. */
     initialize() {
         const category   = this.Context?.Category;
         const typeString = this.Context?.TypeString;
@@ -46,6 +47,9 @@ class LcpPaintTileMode extends ChoosePlotInterfaceMode {
             api.ERR('paint-tile-mode: missing Category/TypeString in context — refusing to enter');
             return false;
         }
+        this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeString;
+        this.hintText = 'Click tiles to paint.';
+        this.hintNote = '(terrain redraws after a camera move or the next turn)';
         api.LOG('paint-tile-mode: entered (' + category + ' = ' + typeString + '); click tiles to paint, Esc/right-click to exit');
         return true;
     }
@@ -75,66 +79,23 @@ class LcpPaintTileMode extends ChoosePlotInterfaceMode {
     }
 
     /**
-     * @override — remember the overlay group so commitPlot can paint a "flash" overlay onto it.
-     * The base group is created in ChoosePlotInterfaceMode's class fields and lives across hovers.
-     * Also pop up an on-screen hint so the player knows HOW to paint and (critically) how to EXIT —
-     * the picker otherwise gives no on-screen cue, which led to the "I'm trapped on this menu" report.
+     * @override — remember the overlay group so commitPlot can paint a "flash" overlay onto it, then
+     * delegate to the shared base (LcpPlotMode) to show the exit banner. The base overlay group is
+     * created in ChoosePlotInterfaceMode's class fields and lives across hovers.
      */
-    decorate(overlay, _modelGroup) {
+    decorate(overlay, modelGroup) {
         this._activeOverlay = overlay;
-        this._showHintBanner();
+        super.decorate(overlay, modelGroup);   // LcpPlotMode shows the shared exit banner
     }
 
-    /** @override — clean up our flash refs AND the hint banner on exit. */
-    undecorate(_overlay, _modelGroup) {
+    /** @override — clean up our flash refs; super removes the shared exit banner. */
+    undecorate(overlay, modelGroup) {
         this._activeOverlay = null;
         if (this._flashTimers) {
             for (const t of this._flashTimers) { try { clearTimeout(t); } catch (_) {} }
             this._flashTimers = null;
         }
-        this._removeHintBanner();
-    }
-
-    /**
-     * Floating instruction banner shown while paint mode is active. Fixed to the top-center of the
-     * main UI document (interface modes run in the HUD context, not the panel's isolate), with
-     * pointer-events:none so it never intercepts the map clicks we depend on. Tells the player the
-     * current paint, that they can keep clicking, and — the key fix — that Esc / right-click exits.
-     */
-    _showHintBanner() {
-        try {
-            this._removeHintBanner();
-            const cat = this.Context?.Category || '';
-            const type = this.Context?.TypeString || '';
-            const el = document.createElement('div');
-            el.id = 'lcp-paint-hint';
-            el.style.cssText = [
-                'position:fixed', 'top:1.2rem', 'left:50%', 'transform:translateX(-50%)',
-                'z-index:99999', 'pointer-events:none', 'max-width:90vw',
-                'padding:0.5rem 1rem', 'border-radius:0.35rem',
-                'background-color:rgba(20,17,11,0.92)', 'border:1px solid #6e5a28',
-                'box-shadow:0 6px 22px rgba(0,0,0,0.6)', 'text-align:center',
-                "font-family:'TitilliumWeb', sans-serif", 'font-size:0.95rem', 'line-height:1.4',
-                'color:#e8dcc0',
-            ].join(';');
-            el.innerHTML =
-                '<div style="color:#d8b24a;font-weight:bold;letter-spacing:0.03em;">🖌 PAINT MODE — ' +
-                    cat + ' = ' + type + '</div>' +
-                '<div>Click tiles to paint. <span style="color:#d8b24a;">Esc</span> or ' +
-                    '<span style="color:#d8b24a;">right-click</span> to exit.</div>' +
-                '<div style="font-size:0.8rem;color:#a89878;">' +
-                    '(terrain redraws after a camera move or the next turn)</div>';
-            (document.body || document.documentElement).appendChild(el);
-            this._hintBanner = el;
-        } catch (e) { api.ERR('paint-tile-mode: hint banner failed:', e); }
-    }
-
-    _removeHintBanner() {
-        try {
-            const el = this._hintBanner || document.getElementById('lcp-paint-hint');
-            if (el && el.parentNode) el.parentNode.removeChild(el);
-        } catch (_) {}
-        this._hintBanner = null;
+        super.undecorate(overlay, modelGroup);
     }
 
     /**

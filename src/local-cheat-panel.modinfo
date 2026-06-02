@@ -61,6 +61,7 @@
 					<Item>ui/cheat-panel/tab-cities.js</Item>
 					<Item>ui/cheat-panel/tab-map.js</Item>
 					<Item>ui/cheat-panel/tab-creative.js</Item>
+					<Item>ui/cheat-panel/lcp-plot-mode-base.js</Item>
 					<Item>ui/cheat-panel/claim-tile-mode.js</Item>
 					<Item>ui/cheat-panel/paint-tile-mode.js</Item>
 				</ImportFiles>
