@@ -1,6 +1,6 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-05-30. Read this first to resume work._
+_Last updated: 2026-06-02. Read this first to resume work._
 
 ## What this is
 A **private, single-player** Civilization VII cheat/sandbox panel mod, built as a private fork of the
@@ -39,7 +39,40 @@ sub-system dock.
 | **M9** | **Minimap precision** — user chose *hexagons + sharper render* (keeps reveal-all). Replace offset-squares with true **pointy-top hexagons** (circumradius `S=tile/√3`, row spacing `1.5·S`, odd-row +½ offset — same model as engine `panel-mini-map.js`, so positions stay engine-accurate); **supersample** the canvas (SS=2 below 16px tiles, smoothing on) for crisp edges; **nearest-hex-center** hover/click pick instead of square `floor()`. Rivers→lower-edge chord, NW/resource→dots, cities→filled hex, units→triangle | 🟡 **implemented (JS-only → Reload UI), NOT yet verified** | `773a219` |
 | **M6** | Remaining polish: steppers, drag-persist, conflict-detect, banners, docs | ⬜ pending | — |
 
-## ▶ Immediate next action: Reload UI, verify M9 (hex minimap) + M8-fix3 (fonts/width/legend)
+## ▶ Current state (2026-06-02) — Items 1–3; Creative tab in progress; Workshop synced
+
+This session worked three items on top of the M9 map-crash fix (which is verified & shipped to the
+public Workshop copy). Full per-item analysis in `docs/discovery-{claim,exit,creative}.md`.
+
+| Item | Scope | State | Commit |
+|---|---|---|---|
+| **M9 map fix** | Map-tab native crash on large maps (batch the canvas draw) | ✅ verified & shipped to Workshop (sam v2) | `9ee2f64` etc. |
+| **Item 1 — claim → growth** | Make cheat-claimed tiles actually growable/buildable | ⛔ **ENGINE WALL** — out-of-radius workability is hardcoded in the C++ core (the growth domain has no JS setter, no modifier widens it). `purchasePlot` gives ownership but not workability. **Reverted claim to the pre-Item-1 `setOwnership` version** per user. See `docs/discovery-claim.md`. | reverted to `5b07ac6` |
+| **Item 2 — clean plot-mode exit** | Esc/right-click/✕ cleanly exit claim/paint modes (was opening pause menu) | ✅ **done & verified in-game.** New shared base `lcp-plot-mode-base.js` (`LcpPlotMode`): `handleInput` swallows cancel + the REQUIRED `reset()` (its absence was the real bug). claim/paint extend it. See `docs/discovery-exit.md` + memory `civ7-custom-interface-mode-gotchas`. | `ab21194` |
+| **Creative #1 — Resource DELETE + read-back** | "(Clear / remove resource)" entry + honest green/red flash (paintPlot re-reads the plot) | ✅ **done & verified in-game** | `cf1ae02` |
+| **Creative #2 — Natural Wonders** | New **Wonder** category (single-tile prep-then-place: set terrain+biome → setFeature → confirm via `isNaturalWonder`); NWs filtered out of the generic Feature list | 🟡 **partial** — single-tile NW placement still gets gated (waterfall/neighbor TypeTags); user: "not working perfectly". Feature-list filter works. **Multi-tile NW = infeasible** (only map-gen-only `TerrainBuilder` anchors shapes). See `docs/discovery-creative.md`. | `fbd4503` |
+
+**Workshop copy synced (2026-06-02):** `…\Mods\sam-cheat-panel\` updated to **version 3** with Item 2 +
+both Creative milestones. **Territory cheat kept OUT** (its `claimPlotForCity` uses `purchasePlot`, not
+`setOwnership` — verified: `setOwnership` only appears in a comment). **NOT yet uploaded to the Workshop**
+— that's the manual Civ7 SDK Mod Uploader step (see `docs/workshop-publishing.md`); the user should test
+the sam copy in-game first, especially since NW is partial.
+
+### ▶ When resuming (next actions)
+1. **Decide the Natural Wonder feature:** keep the Wonder category (single-tile, partial) or drop it.
+   If keeping: investigate the **WATERFALL** gate (Gullfoss/Iguazu) and add **neighbor prep** for Uluru
+   (`ADJACENTTOSAMEBIOME` + `NOTADJACENTMOUNTAIN`). Multi-tile is a dead end — don't pursue.
+2. **Optional Creative polish** (audit `docs/discovery-creative.md` §B2/B4): configurable resource
+   amount, group resources by class, dedupe the category maps, fix stale doc comments.
+3. **Workshop publish** when satisfied: test `sam-cheat-panel` in-game (disable `local-cheat-panel`
+   first), then upload via the SDK Mod Uploader. Bump the sam modinfo version each upload.
+
+**New shared infra this session:** `src/ui/cheat-panel/lcp-plot-mode-base.js` — every plot-selection mode
+(claim, paint, future tools) extends it for the clean exit + exit banner.
+
+---
+
+## (history) Earlier round: Reload UI, verify M9 (hex minimap) + M8-fix3 (fonts/width/legend)
 
 All **JS/CSS-only** (`cheat-panel.js` + `tab-map.js`) → in-game `~` → UI → **Reload UI** (no restart).
 
