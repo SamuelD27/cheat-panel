@@ -48,4 +48,5 @@ and `git commit -F $tmp`.
 - `docs/plan.md` — full implementation plan (milestones, features, risks).
 - `docs/discovery.md` — environment + API-drift findings.
 - `docs/api-snapshot-23245653.md` — verified engine API signatures.
+- `docs/workshop-publishing.md` — how the public `sam-cheat-panel` Workshop build relates to `src/`, and how to launch/update it.
 - `Research.md` — background technical reference.
