@@ -59,6 +59,9 @@ const bar = (c) => '<span style="display:inline-block;width:0.95em;height:0.28em
 const tri = (c) => '<span style="display:inline-block;width:0;height:0;border-left:0.32em solid transparent;border-right:0.32em solid transparent;border-bottom:0.55em solid ' + c + ';vertical-align:-0.02em;margin-right:0.22rem;"></span>';
 let _snapshotCache = null;
 let _snapshotInFlight = false;
+// Bumped on every renderMapTab so async callbacks (teleport read-back) from a PREVIOUS render can
+// detect they're stale and skip touching the old (detached) canvas/snapshot machinery.
+let _renderGen = 0;
 
 // ─── Minimap colors ──────────────────────────────────────────────────
 const BIOME_RGB = {
@@ -484,6 +487,7 @@ const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s
  */
 export function renderMapTab(container) {
     if (!container) return;
+    const renderGen = ++_renderGen;   // see _renderGen — staleness token for this render's closures
 
     container.innerHTML = '';
 
@@ -647,8 +651,25 @@ export function renderMapTab(container) {
         if (!u) { setTpMsg('No unit selected — click one of your units in the world first.', true); return; }
         const d = api.unitDisplay(u);
         setTpMsg('Teleporting ' + d.name + ' to (' + loc.x + ',' + loc.y + ')…');
+        // Liveness check for the async read-back: the tab may have re-rendered (every open/tab
+        // select) or the panel closed before the ~2s poll chain finishes. A stale closure must not
+        // redraw the old detached canvas (Gameface compositor risk) or fight the live render's
+        // module-level snapshot state.
+        const tpLive = () => {
+            if (renderGen !== _renderGen) return false;
+            try {
+                const b = canvas.ownerDocument && canvas.ownerDocument.body;
+                if (b && typeof b.contains === 'function') return b.contains(canvas);
+            } catch (_) {}
+            return true;   // can't tell — assume live (worst case: one wasted redraw)
+        };
         const res = api.teleportUnitTo(u, loc, {
             onDone: (r) => {
+                if (!tpLive()) {
+                    api.LOG('teleport result ignored — Map tab re-rendered/closed (moved=' + r.moved + ')');
+                    if (r.moved) _snapshotCache = null;   // next open re-reads → triangle is current
+                    return;
+                }
                 if (r.moved) {
                     setTpMsg((r.fallback ? 'Arrived (walked) at (' : 'Teleported ✓ (') + loc.x + ',' + loc.y + ') — ' + d.name);
                     api.lookAtPlot(loc);

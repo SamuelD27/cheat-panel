@@ -203,6 +203,11 @@ export function duplicateSelectedUnit() {
 // (pathed walk — with the global ∞-move toggle it reaches anywhere passable) and report that
 // honestly via onDone({moved, fallback}). The destination is pre-validated with the same plot
 // rules as Duplicate (in-bounds / domain / not impassable / no enemy / no same-class stack).
+//
+// Supersession: repeat clicks are supported by design, so each new teleport invalidates any
+// in-flight poll chain — a superseded chain stops dead (no MOVE_TO fallback toward a stale
+// destination, no late onDone overwriting the new attempt's status line).
+let _tpSeq = 0;
 export function teleportUnitTo(unit, loc, opts = {}) {
     const onDone = opts.onDone || (() => {});
     if (!guardSP()) return { ok: false, reason: 'multiplayer' };
@@ -233,8 +238,10 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     } catch (e) { ERR('teleportUnitTo: sendRequest failed:', e); return { ok: false, reason: 'send-failed' }; }
 
     // STEP 4/4: honest read-back — poll the live location; declare success the moment it lands.
+    const seq = ++_tpSeq;
     let polls = 0, fellBack = false;
     const poll = () => {
+        if (seq !== _tpSeq) { LOG('teleportUnitTo: chain #' + seq + ' superseded by a newer teleport — stopped'); return; }
         let now = null;
         try { now = Units.get(id)?.location || null; } catch (_) {}
         polls++;
@@ -449,7 +456,13 @@ export function enterClaimMode(city, opts = {}) {
     try {
         opts.closePanel?.();
         if (city.location && typeof Camera !== 'undefined') Camera.lookAtPlot(city.location, { zoom: 0.35 });
-        InterfaceMode.switchTo('INTERFACEMODE_LCP_CLAIM_TILE', { CityID: cityID });
+        // Re-entry guard: now that F8 opens the panel in ANY interface mode, the user can re-enter
+        // claim mode for a DIFFERENT city while it is still active. Base switchTo() no-ops (returns
+        // false) when the target mode is already current — the old CityID would silently stick — so
+        // exit to default first, then enter fresh with the new parameters.
+        try { if (InterfaceMode.getCurrent && InterfaceMode.getCurrent() === 'INTERFACEMODE_LCP_CLAIM_TILE') InterfaceMode.switchToDefault(); } catch (_) {}
+        const ok = InterfaceMode.switchTo('INTERFACEMODE_LCP_CLAIM_TILE', { CityID: cityID });
+        if (ok === false) { ERR('enterClaimMode: switchTo refused INTERFACEMODE_LCP_CLAIM_TILE'); return false; }
         LOG('enterClaimMode: entered INTERFACEMODE_LCP_CLAIM_TILE for city', cityID.id);
         return true;
     } catch (e) { ERR('enterClaimMode failed:', e); return false; }
@@ -682,7 +695,11 @@ export function enterPaintMode({ category, typeString }, opts = {}) {
     if (!category || !typeString) { ERR('enterPaintMode: missing category/type', category, typeString); return false; }
     try {
         opts.closePanel?.();
-        InterfaceMode.switchTo('INTERFACEMODE_LCP_PAINT_TILE', { Category: category, TypeString: typeString });
+        // Re-entry guard (see enterClaimMode): F8 can reopen the panel while paint mode is active;
+        // a same-mode switchTo() no-ops and keeps the OLD Category/TypeString. Exit first.
+        try { if (InterfaceMode.getCurrent && InterfaceMode.getCurrent() === 'INTERFACEMODE_LCP_PAINT_TILE') InterfaceMode.switchToDefault(); } catch (_) {}
+        const ok = InterfaceMode.switchTo('INTERFACEMODE_LCP_PAINT_TILE', { Category: category, TypeString: typeString });
+        if (ok === false) { ERR('enterPaintMode: switchTo refused INTERFACEMODE_LCP_PAINT_TILE'); return false; }
         LOG('enterPaintMode: entered for', category, '=', typeString);
         return true;
     } catch (e) { ERR('enterPaintMode failed:', e); return false; }
