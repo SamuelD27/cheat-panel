@@ -574,7 +574,10 @@ export function renderMapTab(container) {
         const rect = canvas.getBoundingClientRect();
         return pxToPlot(e.clientX - rect.left, e.clientY - rect.top, _snapshotCache.width, _snapshotCache.height, _state.zoom);
     };
+    // Drag-to-scroll state (null when no button is down). Set by the mousedown handler below.
+    let dragSt = null;
     canvas.addEventListener('mousemove', (e) => {
+        if (dragSt && dragSt.moved) return;   // dragging the map — keep the tooltip hidden
         const loc = plotAtEvent(e);
         if (!loc) { tip.style.display = 'none'; return; }
         const snap = _snapshotCache;
@@ -600,9 +603,50 @@ export function renderMapTab(container) {
         tip.style.top  = ty + 'px';
     });
     canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
-    canvas.addEventListener('click', (e) => {
+
+    // What a plain (non-drag) click does. Split out so later features can route clicks elsewhere.
+    const handlePlotClick = (e) => {
         const loc = plotAtEvent(e);
         if (loc) api.lookAtPlot(loc);
+    };
+
+    // ── Click-and-drag navigation ────────────────────────────────────────────
+    // The canvas usually overflows its wrap (overflow:auto), and Gameface scrollbars are clumsy —
+    // so left-drag GRABS the map and scrolls the wrap directly. A press that moves less than the
+    // threshold is still a click (camera pan). Same window-listener pattern as the proven panel
+    // header drag in cheat-panel.js (mouse events keep flowing while the button is held).
+    const DRAG_THRESHOLD_PX = 5;
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;            // left button only
+        dragSt = { x: e.clientX, y: e.clientY, sl: canvasWrap.scrollLeft, st: canvasWrap.scrollTop, moved: false };
+        const endDrag = (ev, asClick) => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            const wasDrag = dragSt && dragSt.moved;
+            dragSt = null;
+            canvas.style.cursor = 'crosshair';
+            if (asClick && !wasDrag) handlePlotClick(ev);
+            else api.LOG('minimap drag end (scrolled to ' + canvasWrap.scrollLeft + ',' + canvasWrap.scrollTop + ')');
+        };
+        const onMove = (ev) => {
+            if (!dragSt) return;
+            // Lost the mouseup (cursor left the panel doc)? Treat a buttons-up move as a cancel.
+            if (typeof ev.buttons === 'number' && (ev.buttons & 1) === 0) { endDrag(ev, false); return; }
+            const dx = ev.clientX - dragSt.x, dy = ev.clientY - dragSt.y;
+            if (!dragSt.moved && (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX)) {
+                dragSt.moved = true;
+                canvas.style.cursor = 'grabbing';
+                tip.style.display = 'none';
+            }
+            if (dragSt.moved) {
+                canvasWrap.scrollLeft = dragSt.sl - dx;
+                canvasWrap.scrollTop  = dragSt.st - dy;
+            }
+        };
+        const onUp = (ev) => endDrag(ev, true);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        e.preventDefault();
     });
 
     // Legend — laid out as fixed-width chips (3 per line) via flex-wrap. (Inline text + <br> rendered
@@ -630,7 +674,7 @@ export function renderMapTab(container) {
     }
     const legendHint = document.createElement('span');
     legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem;';
-    legendHint.textContent = 'hover a tile = info · click = pan camera';
+    legendHint.textContent = 'hover = info · click = pan camera · drag = scroll the minimap';
     legend.appendChild(legendHint);
     container.appendChild(legend);
 
