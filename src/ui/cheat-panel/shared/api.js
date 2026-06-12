@@ -187,6 +187,90 @@ export function duplicateSelectedUnit() {
     return duplicateUnit(u);
 }
 
+// ─── UNIT TELEPORT (Map tab, 2026-06-12) ──────────────────────────────
+// Instantly relocate an EXISTING unit (identity/XP/promotions preserved) to an arbitrary plot.
+//
+// Primary path: Game.UnitOperations.sendRequest(id, "UNITOPERATION_TELEPORT_TO", {X,Y}) — a HIDDEN
+// generic teleport op registered in base-standard/data/unit-operations.xml:34,:113
+// (VisibleInUI=false, "Travel to"; ZERO base JS call sites, so engine-side validation is
+// unverified). The transport itself (UnitOperations canStart/sendRequest with {X,Y} ints and a
+// ComponentID) is the proven UI-isolate pattern of the verified sibling
+// UNITOPERATION_TELEPORT_TO_CITY (base interface-mode-teleport-to-city.js:47).
+//
+// sendRequest is fire-and-forget and the gameplay layer re-validates silently (the documented
+// "engine wall" pattern), so we POLL the unit's live location as the honest read-back. If the
+// teleport hasn't landed after ~3 polls we fall back to a normal UNITOPERATION_MOVE_TO order
+// (pathed walk — with the global ∞-move toggle it reaches anywhere passable) and report that
+// honestly via onDone({moved, fallback}). The destination is pre-validated with the same plot
+// rules as Duplicate (in-bounds / domain / not impassable / no enemy / no same-class stack).
+export function teleportUnitTo(unit, loc, opts = {}) {
+    const onDone = opts.onDone || (() => {});
+    if (!guardSP()) return { ok: false, reason: 'multiplayer' };
+    if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) { ERR('teleportUnitTo: bad loc', loc); return { ok: false, reason: 'bad-loc' }; }
+    const id = unit?.id;
+    const from = unit?.location;
+    const def = (unit?.type != null) ? GameInfo.Units.lookup(unit.type) : null;
+    if (!id || !from || !def) { ERR('teleportUnitTo: missing unit id/location/def', id, from, def?.UnitType); return { ok: false, reason: 'no-unit' }; }
+    if (from.x === loc.x && from.y === loc.y) { LOG('teleportUnitTo: unit already at (' + loc.x + ',' + loc.y + ')'); return { ok: false, reason: 'same-plot' }; }
+
+    // STEP 1/4: destination pre-check (same rules as Duplicate's placement validation).
+    const why = plotBlockReason(loc, def.Domain, def.FormationClass, id.owner);
+    if (why) { LOG('teleportUnitTo: destination (' + loc.x + ',' + loc.y + ') blocked: ' + why); return { ok: false, reason: why }; }
+
+    // STEP 2/4: canStart probe — diagnostic only. For this hidden op an empty Plots set may just
+    // mean "no precomputed targets"; the sendRequest below is the real test.
+    try {
+        const can = Game.UnitOperations?.canStart?.(id, 'UNITOPERATION_TELEPORT_TO', { X: loc.x, Y: loc.y }, false);
+        LOG('teleportUnitTo: canStart TELEPORT_TO Success=' + (can ? can.Success : 'n/a')
+            + ' plots=' + (can && can.Plots ? can.Plots.length : 'n/a')
+            + ' reasons=' + (can && can.FailureReasons ? JSON.stringify(can.FailureReasons) : 'n/a'));
+    } catch (e) { ERR('teleportUnitTo: canStart probe failed:', e); }
+
+    // STEP 3/4: send the teleport request.
+    try {
+        Game.UnitOperations.sendRequest(id, 'UNITOPERATION_TELEPORT_TO', { X: loc.x, Y: loc.y });
+        LOG('teleportUnitTo: TELEPORT_TO sent — unit', id.id, '(' + from.x + ',' + from.y + ') -> (' + loc.x + ',' + loc.y + ')');
+    } catch (e) { ERR('teleportUnitTo: sendRequest failed:', e); return { ok: false, reason: 'send-failed' }; }
+
+    // STEP 4/4: honest read-back — poll the live location; declare success the moment it lands.
+    let polls = 0, fellBack = false;
+    const poll = () => {
+        let now = null;
+        try { now = Units.get(id)?.location || null; } catch (_) {}
+        polls++;
+        if (now && now.x === loc.x && now.y === loc.y) {
+            LOG('teleportUnitTo: CONFIRMED at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s)' + (fellBack ? ' (via move-order fallback)' : ''));
+            onDone({ moved: true, fallback: fellBack ? 'move-order' : null, loc });
+            return;
+        }
+        if (!fellBack && polls >= 3 && opts.fallbackMove !== false) {
+            // ~0.8s with no movement: the engine silently rejected the teleport → pathed move.
+            fellBack = true;
+            try {
+                const mods = (typeof UnitOperationMoveModifiers !== 'undefined')
+                    ? UnitOperationMoveModifiers.MOVE_IGNORE_UNEXPLORED_DESTINATION : 0;
+                Game.UnitOperations.sendRequest(id, 'UNITOPERATION_MOVE_TO', { X: loc.x, Y: loc.y, Modifiers: mods });
+                LOG('teleportUnitTo: TELEPORT_TO did not land — fell back to MOVE_TO (unit walks)');
+            } catch (e) { ERR('teleportUnitTo: MOVE_TO fallback failed:', e); }
+        }
+        if (polls < 8) setTimeout(poll, 250);
+        else {
+            LOG('teleportUnitTo: gave up — unit at (' + (now ? now.x + ',' + now.y : '?') + ') after ' + polls + ' polls'
+                + (fellBack ? '; move order issued, unit will walk if reachable' : ''));
+            onDone({ moved: false, fallback: fellBack ? 'move-order' : null, loc });
+        }
+    };
+    setTimeout(poll, 200);
+    return { ok: true, reason: 'sent' };
+}
+
+/** Teleport the currently selected unit (see teleportUnitTo). */
+export function teleportSelectedUnitTo(loc, opts = {}) {
+    const u = getSelectedUnit();
+    if (!u) { LOG('teleportSelectedUnitTo: no unit selected'); return { ok: false, reason: 'no-selection' }; }
+    return teleportUnitTo(u, loc, opts);
+}
+
 /** Refresh the on-screen movement-point indicator after a movement restore (known cosmetic bug). */
 export function refreshUnitSelection(unitId) {
     try { UI.Player.deselectAllUnits(); UI.Player.selectUnit(unitId); } catch (e) { ERR('reselect failed:', e); }

@@ -549,6 +549,39 @@ export function renderMapTab(container) {
 
     container.appendChild(filterRow);
 
+    // ── Teleport row ─────────────────────────────────────────────────────────
+    // Arm the toggle, select one of your units in the world (before or after arming), then click a
+    // destination tile ON THE MINIMAP — the unit teleports there (api.teleportUnitTo: hidden
+    // UNITOPERATION_TELEPORT_TO, with read-back + pathed-move fallback). Stays armed for repeat
+    // teleports; re-arms fresh on every tab open (deliberately NOT module-level _state).
+    let tpArmed = false;
+    const tpRow = document.createElement('div');
+    tpRow.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem; flex-wrap:wrap;';
+    const tpBtn = document.createElement('button');
+    tpBtn.className = 'lcp-row-btn';
+    tpBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem;';
+    tpBtn.textContent = '⚡ Teleport';
+    tpBtn.title = 'Arm, then click a destination tile on the minimap to teleport the selected unit there';
+    const tpMsg = document.createElement('span');
+    tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878;';
+    const setTpMsg = (text, warn) => { tpMsg.textContent = text || ''; tpMsg.style.color = warn ? '#e6b800' : '#a89878'; };
+    const refreshTpUi = () => {
+        tpBtn.classList.toggle('active', tpArmed);
+        if (!tpArmed) { setTpMsg('off — arm, select one of your units in the world, then click a destination tile.'); return; }
+        const u = api.getSelectedUnit();
+        if (u) {
+            const d = api.unitDisplay(u);
+            setTpMsg('ARMED for ' + d.name + ' (' + d.x + ',' + d.y + ') — click a destination tile on the minimap.');
+        } else {
+            setTpMsg('ARMED — but no unit selected. Click one of your units in the world first.', true);
+        }
+    };
+    tpBtn.addEventListener('click', () => { tpArmed = !tpArmed; api.LOG('teleport ' + (tpArmed ? 'ARMED' : 'disarmed')); refreshTpUi(); });
+    tpRow.appendChild(tpBtn);
+    tpRow.appendChild(tpMsg);
+    container.appendChild(tpRow);
+    refreshTpUi();
+
     // Canvas wrap — relative so the hover tooltip can position over it; scrolls in both axes.
     const canvasWrap = document.createElement('div');
     // width:fit-content makes the bordered box hug the canvas, so there's no dark band beside the map.
@@ -604,10 +637,44 @@ export function renderMapTab(container) {
     });
     canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
-    // What a plain (non-drag) click does. Split out so later features can route clicks elsewhere.
+    // What a plain (non-drag) click does: teleport when armed, otherwise pan the camera.
     const handlePlotClick = (e) => {
         const loc = plotAtEvent(e);
-        if (loc) api.lookAtPlot(loc);
+        if (!loc) return;
+        if (!tpArmed) { api.lookAtPlot(loc); return; }
+
+        const u = api.getSelectedUnit();
+        if (!u) { setTpMsg('No unit selected — click one of your units in the world first.', true); return; }
+        const d = api.unitDisplay(u);
+        setTpMsg('Teleporting ' + d.name + ' to (' + loc.x + ',' + loc.y + ')…');
+        const res = api.teleportUnitTo(u, loc, {
+            onDone: (r) => {
+                if (r.moved) {
+                    setTpMsg((r.fallback ? 'Arrived (walked) at (' : 'Teleported ✓ (') + loc.x + ',' + loc.y + ') — ' + d.name);
+                    api.lookAtPlot(loc);
+                    _snapshotCache = null;   // re-read so the unit triangle moves on the minimap
+                    redraw();
+                } else if (r.fallback === 'move-order') {
+                    setTpMsg('Teleport rejected by the engine — issued a normal move order instead; the unit will walk there if reachable (↻ to refresh).', true);
+                } else {
+                    setTpMsg('Teleport failed — the engine did not move the unit (UI.log: "LCP: teleportUnitTo").', true);
+                }
+            },
+        });
+        if (!res.ok) {
+            const why = {
+                'same-plot': 'The unit is already on that tile.',
+                'mountain': 'Destination is a mountain.',
+                'impassable': 'Destination is impassable.',
+                'water': 'A land unit can\'t stand on water.',
+                'notwater': 'A sea unit needs a water tile.',
+                'enemyunit': 'Another player\'s unit is on that tile.',
+                'sameclass': 'A same-class unit already occupies that tile.',
+                'offmap': 'That tile is outside the map.',
+                'multiplayer': 'Blocked in multiplayer.',
+            }[res.reason] || ('Blocked: ' + res.reason);
+            setTpMsg(why, true);
+        }
     };
 
     // ── Click-and-drag navigation ────────────────────────────────────────────
