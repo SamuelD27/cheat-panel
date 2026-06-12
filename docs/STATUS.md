@@ -1,6 +1,43 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-02. Read this first to resume work._
+_Last updated: 2026-06-12. Read this first to resume work._
+
+## ▶ Current round (2026-06-12) — 4 user-reported items, all implemented & deployed, NOT yet verified
+
+All four are **JS-only → in-game `~` → UI → Reload UI** (no restart needed). Research notes with
+provenance in `docs/discovery-f8-terrain-teleport.md`. Symlink deploy confirmed live.
+
+| Item | Scope | State | Commit |
+|---|---|---|---|
+| **F8 reliability** | "F8 works for me, not for some players." Root cause VERIFIED in our own logs: a second mod inserting the same `InputActions.ActionId` (`lcp-open-panel` — e.g. the Workshop sam copy, or any fork) → `UNIQUE constraint failed` → the whole shell `UpdateDatabase` rolls back → **no F8 row for that user** (skull button unaffected). Also: the old ContextManager handler ran LAST (pause menu eats every FINISH), and our own `allowsHotKeys()` gate killed F8 outside default/unit-selected modes. Fix: `engine.on('InputAction')` primary path (unstarvable) + gate dropped + raw `keydown` F8 fallback active only while `Input.getActionIdByName` says the row is missing + 300ms debounce. Startup diagnostic in UI.log: `LCP: F8 wiring — input-action row PRESENT/MISSING`. | 🟡 implemented, NOT verified | `6001de2` |
+| **Minimap drag** | Left-drag on the Map-tab minimap grabs and scrolls it inside its box (no more scrollbar fishing); <5px press is still a click = camera pan; tooltip hides while dragging. | 🟡 implemented, NOT verified | `779293f` |
+| **Teleport via minimap** | New **⚡ Teleport** arm-toggle on the Map tab: arm → select your unit in the world → click a destination tile **on the minimap** → unit teleports (identity/XP kept). Primary: hidden `UNITOPERATION_TELEPORT_TO` (DB-registered, `VisibleInUI=false`, zero base call sites — **unverified engine validation**); honest location read-back by polling; auto-fallback to a normal `MOVE_TO` walk (reported in the status line, never silent). Destination pre-checked with the Duplicate plot rules. | 🟡 implemented, NOT verified — **the TELEPORT_TO send is the key probe** | `4ee64c9` |
+| **Terrain paint visual refresh** | User-confirmed: mountain→flat applies to gameplay but the 3D mesh NEVER redraws (not even camera-pan/end-turn — old hint text was wrong, now fixed). No refresh exists in any shipped JS (binary-verified); probe shipped: every paint now runs inside **`WorldBuilder.startBlock()`/`endBlock()`** (unshipped bindings found in the executable, paired with `WorldBuilderBlockBegin/End` engine events). Diagnostics log whether the bindings exist + whether `TerrainTypeChanged`/`WorldBuilderBlockEnd` fire. If inert: `EnableDebugPanels` → "Rebuild Terrain Cache", or save+reload (guaranteed). | 🟡 implemented, NOT verified — **probe** | `ac0ed00` |
+
+### Test plan (Reload UI, then in order)
+1. **F8:** press F8 in normal world view → panel toggles. Then press F8 **inside city view /
+   placement mode / with the pause menu open-then-closed** — it should now toggle everywhere.
+   Check UI.log for `LCP: F8 wiring — input-action row PRESENT` (with only local-cheat-panel
+   enabled it should be PRESENT; if you enable the sam copy too, expect MISSING + the raw
+   fallback — report whether F8 still works in that state, that's the fallback probe).
+2. **Minimap drag:** Map tab → zoom in until the map overflows its box → left-drag: the map pans
+   under the cursor (grabbing cursor, no tooltip). A plain click still pans the real camera.
+3. **Teleport:** select one of your units in the world → Map tab → click **⚡ Teleport** (arms,
+   status shows the unit) → click a far tile on the minimap. Status line reports one of:
+   `Teleported ✓` (then camera pans there + triangle moves) / `rejected — move order issued` /
+   `failed`. Try: far land tile, water tile (should refuse for a land unit), mountain (refuse),
+   occupied tile (refuse). **Report which message you get for the far-land case** — if TELEPORT_TO
+   is rejected, the next iteration wires the destroy+recreate variant behind a confirm.
+4. **Terrain paint:** Creative tab → Terrain → pick Plains/Grass → paint a MOUNTAIN tile. Green
+   flash = data applied. **Watch whether the mountain mesh now actually flattens** (the
+   startBlock/endBlock probe). Check UI.log for `LCP: wb-probe: typeof WorldBuilder.startBlock =`
+   and any `TerrainTypeChanged` / `WorldBuilderBlockEnd` lines — quote them in your report. If the
+   mesh stays, save+reload and confirm it redraws then (it should — visuals rebuild on load).
+
+### Workshop follow-up (when this round is verified)
+Sync to `sam-cheat-panel` and **change its ActionId** to something unique (e.g. `sam-open-panel`,
+in its `input.xml` + dock JS) so the public copy can never collide with the dev copy or stale
+forks; bump modinfo version; private-visibility dry run first (hard rule #3).
 
 ## What this is
 A **private, single-player** Civilization VII cheat/sandbox panel mod, built as a private fork of the
