@@ -10,7 +10,6 @@
  * same map), then monkey-patch its onInitialize to add our launcher button via the dock's own
  * addButton() API. Robust against patch drift on that file.
  */
-import { InterfaceMode } from '/core/ui/interface-modes/interface-modes.js'; // Hotkeys
 import ContextManager from '/core/ui/context-manager/context-manager.js';
 
 function resolvePanelSubSystemDockClass() {
@@ -62,50 +61,84 @@ cheatPanelCSS.textContent = `
 `;
 document.head.appendChild(cheatPanelCSS);
 
-// ── Hotkey Support ───────────────────────────────────────────────────
-class CheatPanelHotkeyInputManager {
-    static getInstance() {
-        if (!CheatPanelHotkeyInputManager.Instance) {
-            CheatPanelHotkeyInputManager.Instance = new CheatPanelHotkeyInputManager();
-        }
-        return CheatPanelHotkeyInputManager.Instance;
-    }
+// ── Hotkey Support (F8-reliability rework, 2026-06-12) ──────────────────────
+// Root causes found for "F8 works for me but not for some players":
+//   1. DB-row loss: if ANOTHER enabled mod inserts the same InputActions.ActionId, the engine logs
+//      "UNIQUE constraint failed: InputActions.ActionId" and ROLLS BACK the whole shell
+//      UpdateDatabase action — the F8 row then never exists for that user, while the game-scope
+//      UIScripts (skull button, panel) still load. Verified live in Database.log/Modding.log with
+//      local-cheat-panel + the Workshop sam-cheat-panel both enabled (both insert 'lcp-open-panel').
+//   2. Starvation: the old ContextManager.registerEngineInputHandler handler runs LAST in the
+//      dispatch chain (context-manager.js:583), after the focused element / cursor target / current
+//      screen each may consume the event — e.g. the pause-menu view consumes EVERY FINISH event.
+//   3. Self-gate: our old copy of hotkey-manager's InterfaceMode.allowsHotKeys() gate silently
+//      no-op'ed F8 in every interface mode except DEFAULT / UNIT_SELECTED (city view, placement…).
+// Fixes: listen on engine.on('InputAction') — the ROOT of the UI input pipeline
+// (core/ui/input/action-handler.js:27), which no screen can starve; drop the allowsHotKeys gate
+// (a cheat-panel toggle should work anywhere); and add a raw DOM-keydown F8 fallback that only acts
+// while Input.getActionIdByName('lcp-open-panel') reports the action row MISSING (case 1), so the
+// two paths cannot both act. togglePanel()'s 300ms debounce backstops any residual overlap.
 
-    init(ContextManager) {
-        ContextManager.registerEngineInputHandler(this);
+let _lastToggleTs = 0;
+function togglePanel(source) {
+    const now = Date.now();
+    if (now - _lastToggleTs < 300) {     // debounce — engine action + raw key can never double-toggle
+        console.log('LCP: hotkey toggle debounced (source=' + source + ')');
+        return;
     }
-
-    handleInput(inputEvent) {
-        const status = inputEvent.detail.status;
-        if (status == InputActionStatuses.FINISH) {
-            const name = inputEvent.detail.name;
-            if (name === "lcp-open-panel") {
-                this.sendHotkeyEvent(name);
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** Dispatches a 'hotkey-{input action name}' event on window. */
-    sendHotkeyEvent(inputActionName) {
-        if (InterfaceMode.allowsHotKeys()) {
-            window.dispatchEvent(new CustomEvent('hotkey-' + inputActionName));
-        }
+    _lastToggleTs = now;
+    try {
+        const isOpen = ContextManager.isCurrentClass('panel-lcp');
+        console.log('LCP: hotkey toggle (source=' + source + ') -> ' + (isOpen ? 'close' : 'open'));
+        if (isOpen) ContextManager.pop('panel-lcp');
+        else ContextManager.push('panel-lcp', { singleton: true });
+    } catch (e) {
+        console.error('LCP: hotkey toggle failed:', e);
     }
 }
 
-const cheatPanelHotkeyInputManager = CheatPanelHotkeyInputManager.getInstance();
+/** True if the shell-scope InputActions row survived DB load (false = rolled back / not queryable). */
+function actionRowPresent() {
+    try {
+        if (typeof Input !== 'undefined' && typeof Input.getActionIdByName === 'function') {
+            return !!Input.getActionIdByName('lcp-open-panel');
+        }
+    } catch (_) { /* fall through */ }
+    return false;   // can't tell → let the raw-key path act; the debounce guards a live action path
+}
+
+// Primary path: the engine emits ('lcp-open-panel', FINISH) on F8 when the DB row exists.
+try {
+    engine.on('InputAction', (name, status /*, x, y */) => {
+        if (name === 'lcp-open-panel' && status === InputActionStatuses.FINISH) togglePanel('input-action');
+    });
+    console.log('LCP: engine.on(InputAction) hotkey listener installed');
+} catch (e) {
+    console.error('LCP: engine.on(InputAction) hookup failed:', e);
+}
+
+// Fallback path: raw F8 keydown — acts ONLY while the action row is missing.
+try {
+    window.addEventListener('keydown', (e) => {
+        if (!e || (e.code !== 'F8' && e.keyCode !== 119)) return;
+        if (actionRowPresent()) return;   // engine path owns F8 — stay silent
+        console.error('LCP: raw F8 fallback fired (input-action row missing — likely an ActionId collision with another enabled panel mod)');
+        togglePanel('raw-keydown');
+    });
+} catch (e) {
+    console.error('LCP: raw keydown fallback hookup failed:', e);
+}
+
+// One-shot startup diagnostic (deferred so the input DB is settled): which F8 path is live?
+setTimeout(() => {
+    const present = actionRowPresent();
+    // console.error on purpose — it reliably reaches UI.log from this context; console.log may not.
+    console.error('LCP: F8 wiring — input-action row ' + (present
+        ? 'PRESENT (engine InputAction path active)'
+        : 'MISSING (raw keydown fallback active — check Database.log for "UNIQUE constraint failed: InputActions.ActionId")'));
+}, 3000);
 
 console.log("LCP: dock bootstrap");
-
-function onOpenCheatPanelHotkey(_event) {
-    if (ContextManager.isCurrentClass('panel-lcp')) {
-        ContextManager.pop('panel-lcp');
-    } else {
-        ContextManager.push('panel-lcp');
-    }
-}
 
 function openCheatPanelViewer() {
     ContextManager.push("panel-lcp", { singleton: true });
@@ -140,9 +173,6 @@ function patchDock() {
     cls.prototype.openCheatPanelViewer = openCheatPanelViewer;
     cls.prototype.__lcpDockPatched = true;
 
-    ContextManager.registerEngineInputHandler(cheatPanelHotkeyInputManager);
-    window.addEventListener('hotkey-lcp-open-panel', onOpenCheatPanelHotkey);
-
     console.log("LCP: sub-system dock patched (1.4.0-safe path)");
     return true;
 }
@@ -155,10 +185,8 @@ if (!patchDock()) {
         if (patchDock() || attempts > 100) {  // ~10s @ 100ms
             clearInterval(interval);
             if (attempts > 100) {
+                // The F8 paths above are module-level, so the hotkey works even without the button.
                 console.error("LCP: gave up waiting for PanelSubSystemDock — button will not appear. Use F8 to open the panel anyway.");
-                // Hotkey still works even without the button.
-                ContextManager.registerEngineInputHandler(cheatPanelHotkeyInputManager);
-                window.addEventListener('hotkey-lcp-open-panel', onOpenCheatPanelHotkey);
             }
         }
     }, 100);
