@@ -44,7 +44,8 @@ export function renderCreativeTab(container, opts = {}) {
     intro.textContent = 'Paint terrain / feature / resource / biome / natural wonder onto a clicked tile. '
         + 'Resource has "(Clear / remove resource)". Wonder preps the tile\'s terrain+biome then places the '
         + 'wonder (single-tile wonders only — multi-tile are flagged "not placeable"). Green flash = applied, '
-        + 'red = engine rejected. Esc / right-click / Exit leaves. Terrain may redraw only after a camera move / next turn.';
+        + 'red = engine rejected. Esc / right-click / Exit leaves. The paint applies to GAMEPLAY immediately; '
+        + 'if the 3D terrain mesh doesn\'t redraw (engine limitation), save & reload rebuilds the visuals.';
     container.appendChild(intro);
 
     const statusEl = document.createElement('div');

@@ -53,7 +53,7 @@ class LcpPaintTileMode extends LcpPlotMode {
         const typeLabel = (typeString === api.CLEAR_RESOURCE) ? 'Clear resource' : typeString;
         this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeLabel;
         this.hintText = 'Click tiles to paint. Green flash = applied, red = engine rejected.';
-        this.hintNote = '(terrain redraws after a camera move or the next turn)';
+        this.hintNote = '(if the 3D terrain doesn\'t redraw, the data IS applied — save & reload rebuilds the visuals)';
         api.LOG('paint-tile-mode: entered (' + category + ' = ' + typeString + '); click tiles to paint, Esc/right-click to exit');
         return true;
     }

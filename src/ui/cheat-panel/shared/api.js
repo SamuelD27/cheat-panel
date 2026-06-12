@@ -557,6 +557,47 @@ function readPaintType(category, loc) {
     return null;
 }
 
+// ── Terrain visual-refresh probe (2026-06-12) ─────────────────────────
+// Painting terrain (e.g. mountain → flat) updates the gameplay DATA synchronously (read-back
+// confirms, and the tile PLAYS like the new terrain) but the 3D terrain mesh never redraws — not
+// even on camera-pan / end-turn (user-confirmed). Base-source + binary research found NO refresh
+// call in any shipped JS (the tuner paints raw, same staleness), but the executable binds two
+// UNSHIPPED members on the very WorldBuilder library we already use: startBlock() / endBlock(),
+// paired engine-side with GameCoreEvent::WorldBuilderBlockBegin/End. Working hypothesis (PROBE —
+// unverified): WB edits are meant to be batched in a block, and block end signals the visualizer
+// to rebuild the terrain cache. So every paint is now wrapped in a block when the bindings exist.
+// One-time diagnostics report (via console.error → reaches UI.log) whether the bindings exist and
+// whether the engine's terrain-change events fire. If endBlock turns out inert, the remaining
+// options are the native debug panel's "Rebuild Terrain Cache" (EnableDebugPanels) or save+reload
+// (terrain visuals are rebuilt during load).
+let _wbDiagDone = false;
+function wbDiagnostics() {
+    if (_wbDiagDone) return;
+    _wbDiagDone = true;
+    try {
+        ERR('wb-probe: typeof WorldBuilder.startBlock =', typeof WorldBuilder?.startBlock,
+            '| endBlock =', typeof WorldBuilder?.endBlock);
+    } catch (e) { ERR('wb-probe: member check failed:', e); }
+    try {
+        let n = 0, m = 0;
+        engine.on('TerrainTypeChanged', () => { if (n++ < 4) ERR('wb-probe: TerrainTypeChanged fired (#' + n + ')'); });
+        engine.on('WorldBuilderBlockEnd', () => { if (m++ < 4) ERR('wb-probe: WorldBuilderBlockEnd fired (#' + m + ')'); });
+    } catch (e) { ERR('wb-probe: event hookup failed:', e); }
+}
+
+// Run a WorldBuilder edit inside startBlock()/endBlock() when the bindings exist (no-op wrapper
+// otherwise). endBlock always runs if startBlock succeeded, even when the edit throws.
+function wbEdit(fn) {
+    wbDiagnostics();
+    let blocked = false;
+    try { if (typeof WorldBuilder?.startBlock === 'function') { WorldBuilder.startBlock(); blocked = true; } }
+    catch (e) { ERR('wbEdit: startBlock failed:', e); }
+    try { return fn(); }
+    finally {
+        if (blocked) { try { WorldBuilder.endBlock(); } catch (e) { ERR('wbEdit: endBlock failed:', e); } }
+    }
+}
+
 // Apply a single paint to one plot (or CLEAR a resource when typeString === CLEAR_RESOURCE). Dispatches
 // to WorldBuilder.MapPlots.set* per category, then READS THE PLOT BACK and returns true only if the value
 // actually stuck — so the caller can flash green on success / red on a silent engine rejection.
@@ -567,18 +608,23 @@ export function paintPlot(category, typeString, loc) {
     try {
         if (category === 'Wonder') return placeNaturalWonder(typeString, loc);
         const clearing = (category === 'Resource' && typeString === CLEAR_RESOURCE);
-        if (clearing) {
-            WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0);
-        } else {
-            const hash = Database.makeHash(typeString);
-            switch (category) {
-                case 'Terrain':  WorldBuilder.MapPlots.setTerrain(hash, loc); break;
-                case 'Feature':  WorldBuilder.MapPlots.setFeature(hash, loc); break;
-                case 'Resource': WorldBuilder.MapPlots.setResource(hash, loc, 1); break;
-                case 'Biome':    WorldBuilder.MapPlots.setBiome(hash, loc); break;
-                default: ERR('paintPlot: unknown category', category); return false;
-            }
+        if (!clearing && !['Terrain', 'Feature', 'Resource', 'Biome'].includes(category)) {
+            ERR('paintPlot: unknown category', category);
+            return false;
         }
+        wbEdit(() => {
+            if (clearing) {
+                WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0);
+            } else {
+                const hash = Database.makeHash(typeString);
+                switch (category) {
+                    case 'Terrain':  WorldBuilder.MapPlots.setTerrain(hash, loc); break;
+                    case 'Feature':  WorldBuilder.MapPlots.setFeature(hash, loc); break;
+                    case 'Resource': WorldBuilder.MapPlots.setResource(hash, loc, 1); break;
+                    case 'Biome':    WorldBuilder.MapPlots.setBiome(hash, loc); break;
+                }
+            }
+        });
         // Confirm the write stuck (engine silently drops illegal combos / out-of-domain features).
         const got = readPaintType(category, loc);
         const ok = clearing ? (got == null) : (got === typeString);
@@ -612,9 +658,12 @@ export function placeNaturalWonder(featureType, loc) {
             for (const r of GameInfo.Feature_NaturalWonders) if (r.FeatureType === featureType) { tiles = r.Tiles ?? 1; break; }
         } catch (_) {}
         // Prep the tile so setFeature's terrain/biome validation passes, then place the wonder feature.
-        if (terrain) WorldBuilder.MapPlots.setTerrain(Database.makeHash(terrain), loc);
-        if (biome)   WorldBuilder.MapPlots.setBiome(Database.makeHash(biome), loc);
-        WorldBuilder.MapPlots.setFeature(Database.makeHash(featureType), loc);
+        // Batched in a WorldBuilder block (see wbEdit) so a working endBlock refreshes visuals once.
+        wbEdit(() => {
+            if (terrain) WorldBuilder.MapPlots.setTerrain(Database.makeHash(terrain), loc);
+            if (biome)   WorldBuilder.MapPlots.setBiome(Database.makeHash(biome), loc);
+            WorldBuilder.MapPlots.setFeature(Database.makeHash(featureType), loc);
+        });
         // Confirm via the feature round-trip + the engine's own natural-wonder flag.
         const got = GameInfo?.Features?.lookup?.(GameplayMap.getFeatureType(loc.x, loc.y))?.FeatureType ?? null;
         let isNW = false;
