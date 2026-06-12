@@ -14,6 +14,14 @@ provenance in `docs/discovery-f8-terrain-teleport.md`. Symlink deploy confirmed 
 | **Teleport via minimap** | New **⚡ Teleport** arm-toggle on the Map tab: arm → select your unit in the world → click a destination tile **on the minimap** → unit teleports (identity/XP kept). Primary: hidden `UNITOPERATION_TELEPORT_TO` (DB-registered, `VisibleInUI=false`, zero base call sites — **unverified engine validation**); honest location read-back by polling; auto-fallback to a normal `MOVE_TO` walk (reported in the status line, never silent). Destination pre-checked with the Duplicate plot rules. | 🟡 implemented, NOT verified — **the TELEPORT_TO send is the key probe** | `4ee64c9` |
 | **Terrain paint visual refresh** | User-confirmed: mountain→flat applies to gameplay but the 3D mesh NEVER redraws (not even camera-pan/end-turn — old hint text was wrong, now fixed). No refresh exists in any shipped JS (binary-verified); probe shipped: every paint now runs inside **`WorldBuilder.startBlock()`/`endBlock()`** (unshipped bindings found in the executable, paired with `WorldBuilderBlockBegin/End` engine events). Diagnostics log whether the bindings exist + whether `TerrainTypeChanged`/`WorldBuilderBlockEnd` fire. If inert: `EnableDebugPanels` → "Rebuild Terrain Cache", or save+reload (guaranteed). | 🟡 implemented, NOT verified — **probe** | `ac0ed00` |
 
+**Post-review hardening (`562fcc8`):** an adversarial review pass confirmed + fixed 3 issues:
+(a) re-entering paint/claim mode while it's already active (newly reachable — F8 now works in any
+mode) silently kept the OLD type/city because base `switchTo()` no-ops on a same-mode call —
+`enterPaintMode`/`enterClaimMode` now `switchToDefault()` first and honor the return value;
+(b) repeat teleport clicks now supersede the previous in-flight poll chain (no stale `MOVE_TO`
+fallback / status overwrite); (c) a teleport result arriving after the Map tab re-rendered or the
+panel closed no longer redraws the detached canvas (render-generation + liveness guard).
+
 ### Test plan (Reload UI, then in order)
 1. **F8:** press F8 in normal world view → panel toggles. Then press F8 **inside city view /
    placement mode / with the pause menu open-then-closed** — it should now toggle everywhere.
