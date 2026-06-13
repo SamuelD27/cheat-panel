@@ -17,15 +17,18 @@
  *
  * M5.2-fix (paint feedback):
  *   Unlike claim mode where city.purchasePlot triggers a visible border shift, paint mode has NO
- *   built-in engine feedback — WorldBuilder.MapPlots.set* applies server-side but the terrain mesh
- *   often doesn't refresh until the camera moves over the plot or the next turn (see Civ7 tuner —
- *   it doesn't refresh either). The user reported "click but nothing selects it" which is exactly
- *   this: clicks register but you can't tell because there's no visual change.
+ *   built-in engine feedback — WorldBuilder.MapPlots.set* applies the change to GAMEPLAY immediately,
+ *   but the 3D terrain mesh does NOT redraw live. CONFIRMED ENGINE WALL (2026-06-13, user-verified):
+ *   camera-pan and end-turn do NOT rebuild it (an earlier hint claiming they would was wrong), and
+ *   there is no UI-callable refresh — base JS only ever calls the six WorldBuilder.MapPlots.set*
+ *   setters (no rebuild/refresh method anywhere), TerrainBuilder is map-gen-only/inert from the UI
+ *   isolate, and the unshipped WorldBuilder.startBlock()/endBlock() bindings we probed (commit ac0ed00)
+ *   did nothing. Only a SAVE + RELOAD rebuilds the visuals. So we paint our OWN feedback instead:
  *
- *   So we paint our OWN feedback: a yellow cursor overlay where you're about to click (decorateHover)
- *   and a green flash on commit that lingers ~2s before clearing. The flash also confirms whether
- *   set*() rejected the paint (we only flash on success). The actual terrain visual refresh remains
- *   an engine-side limitation; end-turn or camera-pan over the plot will redraw it.
+ *   a yellow cursor overlay where you're about to click (decorateHover) and a green flash on commit
+ *   that lingers ~2s (red if api.paintPlot's read-back shows the engine rejected the paint). That
+ *   flash is the per-click confirmation; the data is applied even though the mesh won't visibly change
+ *   until you reload the save.
  */
 import LcpPlotMode from '/base-standard/ui/cheat-panel/lcp-plot-mode-base.js';
 import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
@@ -53,7 +56,7 @@ class LcpPaintTileMode extends LcpPlotMode {
         const typeLabel = (typeString === api.CLEAR_RESOURCE) ? 'Clear resource' : typeString;
         this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeLabel;
         this.hintText = 'Click tiles to paint. Green flash = applied, red = engine rejected.';
-        this.hintNote = '(if the 3D terrain doesn\'t redraw, the data IS applied — save & reload rebuilds the visuals)';
+        this.hintNote = '(the 3D terrain will NOT redraw live — engine limit; the data IS applied, save & reload to see it)';
         api.LOG('paint-tile-mode: entered (' + category + ' = ' + typeString + '); click tiles to paint, Esc/right-click to exit');
         return true;
     }

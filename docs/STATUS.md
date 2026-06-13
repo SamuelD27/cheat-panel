@@ -1,8 +1,34 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-12. Read this first to resume work._
+_Last updated: 2026-06-13. Read this first to resume work._
 
-## ▶ Current round (2026-06-12) — 4 user-reported items, all implemented & deployed, NOT yet verified
+## ▶ Current round (2026-06-13) — in-game feedback on the 2026-06-12 items; 3 Map-tab fixes + terrain wall confirmed
+
+User tested the 2026-06-12 round. Reports + fixes (all **JS-only → Reload UI**, no restart). F8 not
+re-reported (assumed OK or untested — confirm). Files: `tab-map.js`, `paint-tile-mode.js`.
+
+| Report | Diagnosis | Fix | State |
+|---|---|---|---|
+| **Minimap drag can't pan left/right** (only zoom worked) | `canvasWrap` used `width:fit-content`, so the box hugged the canvas → zero internal overflow → `overflow:auto` never engaged → `scrollLeft` stayed 0. A canvas wider than the panel also spilled past the content edge. | `canvasWrap` → `box-sizing:border-box; width:100%` (fixed-width scroll box). Drag now moves `scrollLeft/Top`. Click-to-pan and the <5px click/drag split are unchanged. | 🟡 implemented, NOT verified |
+| **Legend "cut off too far to the right"** | Legend chips were `flex:0 0 33%` + `white-space:nowrap`; a wide label (e.g. "Navigable") overflowed its rigid 33% basis past the panel's right edge, clipping the row. The fit-content canvas overflow compounded it. | Chips → `flex:0 1 auto` (content-sized, wrap as many-per-line as fit); legend font 1.2→1.0rem, `gap`, `max-width:100%`; hint `white-space:normal`. | 🟡 implemented, NOT verified |
+| **"I don't see the teleport option"** | The ⚡ Teleport control was a small `.lcp-row-btn` chip sitting immediately beside the Cities/Resources/Me filter toggles — same style, so it read as just another filter and got overlooked. (It WAS rendering — the canvas/legend below it render fine, proving `refreshTpUi()` didn't throw.) | Promoted to a full-width labeled `.lcp-toggle-btn` under its own **── Teleport unit ──** section divider; button text now shows state (`⚡ Teleport: OFF — click to arm` / `ARMED — click a minimap tile`). | 🟡 implemented, NOT verified |
+| **Terrain paint "still doesn't change the UI"** (the startBlock/endBlock probe failed) | **CONFIRMED ENGINE WALL (3rd time).** Re-audited base JS: `WorldBuilder` is only ever `WorldBuilder.MapPlots.set*` (6 setters, 20 call sites) — no rebuild/refresh anywhere; `TerrainBuilder` is map-gen-only (inert from the UI isolate); the probed `startBlock/endBlock` bindings do nothing. Camera-pan/end-turn do NOT redraw it either. **Only save+reload rebuilds the mesh.** | No code path can force the redraw — made the in-game text honest instead (paint banner hintNote + header comment no longer claim camera-pan/end-turn works; both now say "data IS applied, save & reload to see it"). The data write + green/red read-back flash are unchanged. | ✅ honest messaging; **engine-limited, not fixable from JS** |
+
+### Test plan (Reload UI, then in order)
+1. **Teleport visible:** Map tab → between the Cities/Resources/Me filter row and the minimap there's now
+   a **── Teleport unit ──** divider and a wide button reading **⚡ Teleport: OFF — click to arm**. Click
+   it → it turns active and reads **ARMED — click a minimap tile**, message shows your selected unit.
+2. **Teleport works:** with a unit selected, arm it, click a far land tile on the minimap → status reports
+   `Teleported ✓` / `Arrived (walked)` / `rejected — move order issued` / `failed`. **Report the far-land
+   message** (still the key probe for whether `UNITOPERATION_TELEPORT_TO` validates).
+3. **Drag-pan:** zoom **in** (+) until the map overflows its box → left-drag → the map scrolls under the
+   cursor (grab cursor, tooltip hidden). A plain click (<5px) still pans the camera / teleports if armed.
+4. **Legend:** the legend row below the map is fully visible (no right-edge clipping) and wraps cleanly.
+5. **Terrain (expectation reset):** painting still won't visibly change the mesh live — that's a confirmed
+   engine limit. Paint a tile (green flash = data applied), then **save + reload** and confirm the change
+   shows after the reload. The banner now states this so it no longer reads as "broken".
+
+## ▶ Round (2026-06-12) — 4 user-reported items, all implemented & deployed, NOT yet verified
 
 All four are **JS-only → in-game `~` → UI → Reload UI** (no restart needed). Research notes with
 provenance in `docs/discovery-f8-terrain-teleport.md`. Symlink deploy confirmed live.

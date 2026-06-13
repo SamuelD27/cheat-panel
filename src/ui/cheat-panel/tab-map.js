@@ -553,25 +553,29 @@ export function renderMapTab(container) {
 
     container.appendChild(filterRow);
 
-    // ── Teleport row ─────────────────────────────────────────────────────────
-    // Arm the toggle, select one of your units in the world (before or after arming), then click a
-    // destination tile ON THE MINIMAP — the unit teleports there (api.teleportUnitTo: hidden
-    // UNITOPERATION_TELEPORT_TO, with read-back + pathed-move fallback). Stays armed for repeat
-    // teleports; re-arms fresh on every tab open (deliberately NOT module-level _state).
+    // ── Teleport section ──────────────────────────────────────────────────────
+    // A full-width LABELED toggle (it used to be a small .lcp-row-btn chip sat right next to
+    // Cities/Resources/Me, so it read as just another filter and was easy to miss). Arm it, select one
+    // of your units in the world (before or after arming), then click a destination tile ON THE MINIMAP
+    // — the unit teleports there (api.teleportUnitTo: hidden UNITOPERATION_TELEPORT_TO, with read-back +
+    // pathed-move fallback). Stays armed for repeat teleports; re-arms fresh on every tab open
+    // (deliberately NOT module-level _state).
+    const tpSection = document.createElement('div');
+    tpSection.className = 'lcp-section';
+    tpSection.textContent = '── Teleport unit ──';
+    container.appendChild(tpSection);
+
     let tpArmed = false;
-    const tpRow = document.createElement('div');
-    tpRow.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem; flex-wrap:wrap;';
     const tpBtn = document.createElement('button');
-    tpBtn.className = 'lcp-row-btn';
-    tpBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem;';
-    tpBtn.textContent = '⚡ Teleport';
+    tpBtn.className = 'lcp-toggle-btn';   // full-width prominent toggle (same widget as the ∞-move button)
     tpBtn.title = 'Arm, then click a destination tile on the minimap to teleport the selected unit there';
-    const tpMsg = document.createElement('span');
-    tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878;';
+    const tpMsg = document.createElement('div');
+    tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878; margin:0.25rem 0 0.4rem 0; min-height:1.1em;';
     const setTpMsg = (text, warn) => { tpMsg.textContent = text || ''; tpMsg.style.color = warn ? '#e6b800' : '#a89878'; };
     const refreshTpUi = () => {
         tpBtn.classList.toggle('active', tpArmed);
-        if (!tpArmed) { setTpMsg('off — arm, select one of your units in the world, then click a destination tile.'); return; }
+        tpBtn.textContent = tpArmed ? '⚡ Teleport: ARMED — click a minimap tile' : '⚡ Teleport: OFF — click to arm';
+        if (!tpArmed) { setTpMsg('Arm this, select one of your units in the world, then click a destination tile on the minimap below.'); return; }
         const u = api.getSelectedUnit();
         if (u) {
             const d = api.unitDisplay(u);
@@ -581,17 +585,20 @@ export function renderMapTab(container) {
         }
     };
     tpBtn.addEventListener('click', () => { tpArmed = !tpArmed; api.LOG('teleport ' + (tpArmed ? 'ARMED' : 'disarmed')); refreshTpUi(); });
-    tpRow.appendChild(tpBtn);
-    tpRow.appendChild(tpMsg);
-    container.appendChild(tpRow);
+    container.appendChild(tpBtn);
+    container.appendChild(tpMsg);
     refreshTpUi();
 
-    // Canvas wrap — relative so the hover tooltip can position over it; scrolls in both axes.
+    // Canvas wrap — relative so the hover tooltip can position over it; a FIXED-width (100%) scroll box
+    // so overflow:auto actually engages. Drag-to-scroll moves canvasWrap.scrollLeft/scrollTop, which is
+    // only non-zero when the box has a definite width SMALLER than the canvas inside it. The old
+    // width:fit-content made the box hug the canvas (box === canvas width → zero internal overflow), so
+    // the map couldn't be panned left/right at all, AND a canvas wider than the panel spilled past the
+    // content edge and clipped the legend below. A 100% box fixes both; auto-fit zoom already sizes the
+    // canvas to ~panel width, so the only cosmetic cost is a thin dark band when the map is zoomed out.
     const canvasWrap = document.createElement('div');
-    // width:fit-content makes the bordered box hug the canvas, so there's no dark band beside the map.
-    // If the canvas is bigger than the panel, max-width/max-height cap the box and it scrolls inside.
-    canvasWrap.style.cssText = 'position:relative; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
-        + 'width:fit-content; max-width:100%; max-height:40rem; overflow:auto; '
+    canvasWrap.style.cssText = 'position:relative; box-sizing:border-box; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
+        + 'width:100%; max-width:100%; max-height:40rem; overflow:auto; '
         + 'border:1px solid rgba(120,100,55,0.35);';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
@@ -740,8 +747,8 @@ export function renderMapTab(container) {
     // Legend — laid out as fixed-width chips (3 per line) via flex-wrap. (Inline text + <br> rendered
     // one-item-per-line in this Gameface build; an explicit chip grid is reliable.)
     const legend = document.createElement('div');
-    legend.style.cssText = 'display:flex; flex-wrap:wrap; font-size:1.2rem; color:#a89878; '
-        + 'line-height:1.5; margin-bottom:0.3rem;';
+    legend.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.1rem 0.7rem; font-size:1.0rem; color:#a89878; '
+        + 'line-height:1.5; margin-bottom:0.3rem; max-width:100%;';
     const legendItems = [
         sq('#e84a3a') + 'Strategic',
         sq('#c060d0') + 'Luxury',
@@ -755,14 +762,16 @@ export function renderMapTab(container) {
     ];
     for (const html of legendItems) {
         const chip = document.createElement('span');
-        // 3 per line: each chip takes ~1/3 of the row; nowrap keeps swatch + label together.
-        chip.style.cssText = 'flex:0 0 33%; display:inline-flex; align-items:center; white-space:nowrap;';
+        // Content-sized chips that wrap as many-per-line as fit. (Rigid flex:0 0 33% + nowrap forced a
+        // wide label like "Navigable" past the panel's right edge, which clipped the whole legend.)
+        // nowrap still keeps each swatch+label together so a chip never breaks mid-item.
+        chip.style.cssText = 'flex:0 1 auto; display:inline-flex; align-items:center; white-space:nowrap;';
         chip.innerHTML = html;
         legend.appendChild(chip);
     }
     const legendHint = document.createElement('span');
-    legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem;';
-    legendHint.textContent = 'hover = info · click = pan camera · drag = scroll the minimap';
+    legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem; white-space:normal;';
+    legendHint.textContent = 'hover = info · click = pan camera (teleport if armed above) · drag = scroll the minimap';
     legend.appendChild(legendHint);
     container.appendChild(legend);
 
