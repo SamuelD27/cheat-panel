@@ -51,6 +51,11 @@ const _state = {
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
     zoom: 18,               // pixels per tile; +/- buttons clamp to [2, 34]
     userZoomed: false,      // once the user clicks −/+ we stop auto-fitting zoom to the panel width
+    // Transform-based pan (logical px). The canvas is translate()d inside an overflow:hidden viewport,
+    // so it ALWAYS stays clipped inside the panel and pans freely in BOTH axes — unlike the old
+    // overflow:auto + scrollLeft box, which never overflowed horizontally (auto-fit sized the canvas
+    // to the panel width) and which Gameface scrolls unreliably anyway.
+    panX: 0, panY: 0,
 };
 
 // Font-independent legend/chip swatches (the UI font lacks ■ ● ▲ ▬, which render as tofu boxes).
@@ -533,8 +538,17 @@ export function renderMapTab(container) {
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', () => {
+            const oldZoom = _state.zoom;
             _state.userZoomed = true;   // manual zoom wins over auto-fit from here on
             _state.zoom = Math.max(2, Math.min(34, _state.zoom + delta));
+            // Keep whatever sits under the viewport centre fixed while zooming (the canvas scales ~linearly
+            // with tileSize about its own 0,0 origin, so rescale the pan offset about the viewport centre).
+            const ratio = _state.zoom / oldZoom;
+            const vw = viewport.clientWidth, vh = viewport.clientHeight;
+            if (vw && vh) {
+                _state.panX = vw / 2 - ratio * (vw / 2 - _state.panX);
+                _state.panY = vh / 2 - ratio * (vh / 2 - _state.panY);
+            }
             redraw();
         });
         return b;
@@ -555,70 +569,181 @@ export function renderMapTab(container) {
 
     // ── Teleport section ──────────────────────────────────────────────────────
     // A full-width LABELED toggle (it used to be a small .lcp-row-btn chip sat right next to
-    // Cities/Resources/Me, so it read as just another filter and was easy to miss). Arm it, select one
-    // of your units in the world (before or after arming), then click a destination tile ON THE MINIMAP
-    // — the unit teleports there (api.teleportUnitTo: hidden UNITOPERATION_TELEPORT_TO, with read-back +
-    // pathed-move fallback). Stays armed for repeat teleports; re-arms fresh on every tab open
-    // (deliberately NOT module-level _state).
+    // Cities/Resources/Me, so it read as just another filter and was easy to miss). Pick the unit from
+    // the IN-PANEL list (or leave it on "World-selected" to use the in-world selection — "both" paths
+    // supported), arm, then click a destination tile ON THE MINIMAP — the unit teleports there
+    // (api.teleportUnitTo: hidden UNITOPERATION_TELEPORT_TO, with read-back + pathed-move fallback).
+    // The whole flow stays inside the panel. Stays armed for repeat teleports; re-arms fresh on every
+    // tab open (tpArmed / tpPickedId are deliberately local, NOT module-level _state).
     const tpSection = document.createElement('div');
     tpSection.className = 'lcp-section';
     tpSection.textContent = '── Teleport unit ──';
     container.appendChild(tpSection);
 
     let tpArmed = false;
+    let tpPickedId = null;   // ComponentID of an in-panel-picked unit; null = use the world-selected unit
+
     const tpBtn = document.createElement('button');
     tpBtn.className = 'lcp-toggle-btn';   // full-width prominent toggle (same widget as the ∞-move button)
-    tpBtn.title = 'Arm, then click a destination tile on the minimap to teleport the selected unit there';
+    tpBtn.title = 'Arm, then click a destination tile on the minimap to teleport the chosen unit there';
+    container.appendChild(tpBtn);
+
     const tpMsg = document.createElement('div');
-    tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878; margin:0.25rem 0 0.4rem 0; min-height:1.1em;';
+    tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878; margin:0.25rem 0 0.3rem 0; min-height:1.1em;';
     const setTpMsg = (text, warn) => { tpMsg.textContent = text || ''; tpMsg.style.color = warn ? '#e6b800' : '#a89878'; };
+    container.appendChild(tpMsg);
+
+    // In-panel unit picker — pick WHICH unit to teleport without leaving the panel. Header has a small
+    // ↻ to re-read the unit list (units move/spawn). Chips are custom buttons (never native <select>,
+    // which Gameface mishandles). The whole picker is part of the normal flow, so it always stays
+    // inside the panel. "Both" selection: an in-panel pick overrides; otherwise the world-selected unit.
+    const tpPickHeader = document.createElement('div');
+    tpPickHeader.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin:0.1rem 0 0.15rem 0;';
+    const tpPickTitle = document.createElement('div');
+    tpPickTitle.style.cssText = 'font-size:0.78rem; color:#9a8c6a; letter-spacing:0.03em; text-transform:uppercase;';
+    tpPickTitle.textContent = 'Unit to teleport';
+    const tpPickRefresh = document.createElement('button');
+    tpPickRefresh.className = 'lcp-row-btn';
+    tpPickRefresh.style.cssText = 'flex:0 0 auto; padding:0.1rem 0.5rem; font-size:0.82rem; margin-left:auto;';
+    tpPickRefresh.textContent = '↻';
+    tpPickRefresh.title = 'Re-read your units';
+    tpPickHeader.appendChild(tpPickTitle);
+    tpPickHeader.appendChild(tpPickRefresh);
+    container.appendChild(tpPickHeader);
+
+    const tpPickList = document.createElement('div');
+    tpPickList.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.25rem; max-height:8rem; overflow-y:auto; '
+        + 'padding:0.2rem; margin-bottom:0.4rem; background:rgba(0,0,0,0.3); border:1px solid rgba(120,100,55,0.25); border-radius:0.2rem;';
+    container.appendChild(tpPickList);
+
+    // Re-resolve the chosen unit fresh each time (the picked unit may have moved/died since selection).
+    const resolveTpUnit = () => {
+        if (tpPickedId) {
+            try {
+                const u = api.getLocalUnits().find(x => x && x.id && x.id.id === tpPickedId.id && x.id.owner === tpPickedId.owner);
+                if (u) return u;
+            } catch (_) {}
+            tpPickedId = null;   // picked unit no longer exists → fall back to world-selected
+        }
+        try { return api.getSelectedUnit(); } catch (_) { return null; }
+    };
+
+    const buildTpPickList = () => {
+        tpPickList.innerHTML = '';
+        let units = [];
+        try { units = api.getLocalUnits() || []; } catch (e) { api.ERR('teleport unit list failed:', e); }
+
+        // "World-selected" chip — clears the in-panel pick so the live in-world selection is used.
+        const worldChip = document.createElement('button');
+        worldChip.className = 'lcp-row-btn';
+        worldChip.style.cssText = 'flex:0 0 auto; margin:0; padding:0.14rem 0.5rem; font-size:0.82rem;';
+        worldChip.textContent = '◎ World-selected';
+        worldChip.title = 'Use whatever unit is selected in the game world';
+        if (!tpPickedId) worldChip.classList.add('active');
+        worldChip.addEventListener('click', () => { tpPickedId = null; markPicked(); refreshTpUi(); });
+        tpPickList.appendChild(worldChip);
+
+        for (const u of units) {
+            if (!u || !u.id) continue;
+            let d; try { d = api.unitDisplay(u); } catch (_) { d = { name: '(unit)', x: -1, y: -1 }; }
+            const chip = document.createElement('button');
+            chip.className = 'lcp-row-btn';
+            chip.style.cssText = 'flex:0 0 auto; margin:0; padding:0.14rem 0.5rem; font-size:0.82rem;';
+            chip.textContent = d.name + ' (' + d.x + ',' + d.y + ')';
+            chip.dataset.uid = u.id.owner + ':' + u.id.id;
+            if (tpPickedId && tpPickedId.id === u.id.id && tpPickedId.owner === u.id.owner) chip.classList.add('active');
+            chip.addEventListener('click', () => { tpPickedId = { owner: u.id.owner, id: u.id.id }; markPicked(); refreshTpUi(); });
+            tpPickList.appendChild(chip);
+        }
+        if (!units.length) {
+            const empty = document.createElement('div');
+            empty.className = 'lcp-list-empty';
+            empty.style.cssText = 'font-size:0.82rem;';
+            empty.textContent = '(no units found — found a unit, then ↻)';
+            tpPickList.appendChild(empty);
+        }
+    };
+    // Toggle the .active highlight without a full rebuild (cheap; keeps scroll position).
+    const markPicked = () => {
+        for (const b of tpPickList.querySelectorAll('button')) {
+            const uid = b.dataset.uid;
+            const isWorld = (b.textContent || '').indexOf('World-selected') !== -1;
+            const on = isWorld ? !tpPickedId : (tpPickedId && uid === (tpPickedId.owner + ':' + tpPickedId.id));
+            b.classList.toggle('active', !!on);
+        }
+    };
+    tpPickRefresh.addEventListener('click', () => { buildTpPickList(); refreshTpUi(); });
+
     const refreshTpUi = () => {
         tpBtn.classList.toggle('active', tpArmed);
         tpBtn.textContent = tpArmed ? '⚡ Teleport: ARMED — click a minimap tile' : '⚡ Teleport: OFF — click to arm';
-        if (!tpArmed) { setTpMsg('Arm this, select one of your units in the world, then click a destination tile on the minimap below.'); return; }
-        const u = api.getSelectedUnit();
-        if (u) {
-            const d = api.unitDisplay(u);
-            setTpMsg('ARMED for ' + d.name + ' (' + d.x + ',' + d.y + ') — click a destination tile on the minimap.');
-        } else {
-            setTpMsg('ARMED — but no unit selected. Click one of your units in the world first.', true);
+        const u = resolveTpUnit();
+        const src = tpPickedId ? 'picked' : 'world-selected';
+        if (!u) {
+            setTpMsg(tpArmed
+                ? 'ARMED — but no unit chosen. Pick one from the list above (or select one in the world).'
+                : 'Pick a unit above (or select one in the world), arm, then click a destination tile on the minimap.',
+                tpArmed);
+            return;
         }
+        const d = api.unitDisplay(u);
+        setTpMsg((tpArmed ? 'ARMED for ' : 'Will teleport ') + d.name + ' (' + d.x + ',' + d.y + ') [' + src + ']'
+            + (tpArmed ? ' — click a destination tile on the minimap.' : ' — arm to teleport.'));
     };
     tpBtn.addEventListener('click', () => { tpArmed = !tpArmed; api.LOG('teleport ' + (tpArmed ? 'ARMED' : 'disarmed')); refreshTpUi(); });
-    container.appendChild(tpBtn);
-    container.appendChild(tpMsg);
+    buildTpPickList();
     refreshTpUi();
 
-    // Canvas wrap — relative so the hover tooltip can position over it; a FIXED-width (100%) scroll box
-    // so overflow:auto actually engages. Drag-to-scroll moves canvasWrap.scrollLeft/scrollTop, which is
-    // only non-zero when the box has a definite width SMALLER than the canvas inside it. The old
-    // width:fit-content made the box hug the canvas (box === canvas width → zero internal overflow), so
-    // the map couldn't be panned left/right at all, AND a canvas wider than the panel spilled past the
-    // content edge and clipped the legend below. A 100% box fixes both; auto-fit zoom already sizes the
-    // canvas to ~panel width, so the only cosmetic cost is a thin dark band when the map is zoomed out.
-    const canvasWrap = document.createElement('div');
-    canvasWrap.style.cssText = 'position:relative; box-sizing:border-box; background:rgba(0,0,0,0.55); padding:3px; margin-bottom:0.3rem; '
-        + 'width:100%; max-width:100%; max-height:40rem; overflow:auto; '
-        + 'border:1px solid rgba(120,100,55,0.35);';
+    // Minimap VIEWPORT — a fixed-size, overflow:hidden window onto a larger canvas. The canvas is
+    // absolutely positioned and moved with a CSS transform (translate). This keeps the map ALWAYS
+    // clipped inside the panel (it can never spill past the frame), and pans freely in BOTH axes via
+    // the transform — no reliance on Gameface's flaky overflow:auto/scrollLeft (the previous approach,
+    // which also never overflowed horizontally because auto-fit sizes the canvas to the panel width).
+    const REM = (() => { try { return parseFloat(getComputedStyle((container.ownerDocument || document).documentElement).fontSize) || 16; } catch (_) { return 16; } })();
+    const VIEW_CAP_PX = Math.round(26 * REM);   // tallest the viewport ever gets (rem-based → scale-safe)
+    const viewport = document.createElement('div');
+    viewport.style.cssText = 'position:relative; box-sizing:border-box; background:rgba(0,0,0,0.55); '
+        + 'margin-bottom:0.3rem; width:100%; max-width:100%; height:' + VIEW_CAP_PX + 'px; '
+        + 'overflow:hidden; border:1px solid rgba(120,100,55,0.35); cursor:grab; touch-action:none;';
     const canvas = document.createElement('canvas');
     canvas.className = 'lcp-minimap';
-    canvas.style.cssText = 'display:block; image-rendering:auto; cursor:crosshair;';
-    canvasWrap.appendChild(canvas);
+    canvas.style.cssText = 'position:absolute; left:0; top:0; display:block; image-rendering:auto; '
+        + 'transform-origin:0 0; will-change:transform;';
+    viewport.appendChild(canvas);
 
-    // Hover tooltip (absolutely positioned inside the wrap).
+    // Hover tooltip (absolutely positioned inside the viewport so it can never leave the panel).
     const tip = document.createElement('div');
     tip.style.cssText = 'position:absolute; pointer-events:none; display:none; z-index:5; '
         + 'background:rgba(20,17,11,0.95); border:1px solid #6e5a28; color:#e8dcc0; '
         + 'padding:0.2rem 0.4rem; font-size:0.72rem; line-height:1.35; border-radius:0.2rem; max-width:14rem;';
-    canvasWrap.appendChild(tip);
-    container.appendChild(canvasWrap);
+    viewport.appendChild(tip);
+    container.appendChild(viewport);
+
+    // ── Pan helpers ───────────────────────────────────────────────────────────
+    // Clamp the pan so the canvas always covers / centres inside the viewport (never dragged out of
+    // sight), then write the transform. Sizes are in LOGICAL px (the canvas is 1:1 — no CSS scale).
+    const applyPan = () => { canvas.style.transform = 'translate(' + Math.round(_state.panX) + 'px,' + Math.round(_state.panY) + 'px)'; };
+    const clampPan = () => {
+        const vw = viewport.clientWidth, vh = viewport.clientHeight;
+        const cw = canvas.width, ch = canvas.height;
+        if (!vw || !vh || !cw || !ch) return;   // not laid out yet (hidden tab) — leave pan as-is
+        _state.panX = (cw <= vw) ? Math.round((vw - cw) / 2) : Math.min(0, Math.max(vw - cw, _state.panX));
+        _state.panY = (ch <= vh) ? Math.round((vh - ch) / 2) : Math.min(0, Math.max(vh - ch, _state.panY));
+        applyPan();
+    };
+    // Shrink the viewport to the canvas when the map is short (no empty band), cap it when tall (pannable).
+    const sizeViewport = () => { viewport.style.height = Math.max(40, Math.min(canvas.height || VIEW_CAP_PX, VIEW_CAP_PX)) + 'px'; };
 
     const plotAtEvent = (e) => {
         if (!_snapshotCache || !_snapshotCache.width) return null;
-        const rect = canvas.getBoundingClientRect();
-        return pxToPlot(e.clientX - rect.left, e.clientY - rect.top, _snapshotCache.width, _snapshotCache.height, _state.zoom);
+        // Use untransformed viewport rect + explicit pan offset to avoid Gameface getBoundingClientRect transform uncertainty
+        const vRect = viewport.getBoundingClientRect();
+        const cx = e.clientX - vRect.left - _state.panX;
+        const cy = e.clientY - vRect.top - _state.panY;
+        if (cx < 0 || cy < 0 || cx > canvas.width || cy > canvas.height) return null;   // outside the map image
+        return pxToPlot(cx, cy, _snapshotCache.width, _snapshotCache.height, _state.zoom);
     };
-    // Drag-to-scroll state (null when no button is down). Set by the mousedown handler below.
+    // Drag-to-pan state (null when no button is down). Set by the viewport mousedown handler below.
     let dragSt = null;
     canvas.addEventListener('mousemove', (e) => {
         if (dragSt && dragSt.moved) return;   // dragging the map — keep the tooltip hidden
@@ -639,10 +764,13 @@ export function renderMapTab(container) {
         else if (p.river === 2) parts.push('Navigable river');
         tip.innerHTML = parts.join('<br>');
         tip.style.display = 'block';
-        // Position near the cursor but keep inside the wrap.
-        const wrapRect = canvasWrap.getBoundingClientRect();
+        // Position near the cursor but keep the whole tooltip inside the viewport (inside the panel).
+        const wrapRect = viewport.getBoundingClientRect();
         let tx = e.clientX - wrapRect.left + 12;
         let ty = e.clientY - wrapRect.top + 12;
+        const tw = tip.offsetWidth || 160, th = tip.offsetHeight || 60;
+        if (tx + tw > viewport.clientWidth)  tx = Math.max(2, viewport.clientWidth  - tw - 4);
+        if (ty + th > viewport.clientHeight) ty = Math.max(2, viewport.clientHeight - th - 4);
         tip.style.left = tx + 'px';
         tip.style.top  = ty + 'px';
     });
@@ -654,8 +782,8 @@ export function renderMapTab(container) {
         if (!loc) return;
         if (!tpArmed) { api.lookAtPlot(loc); return; }
 
-        const u = api.getSelectedUnit();
-        if (!u) { setTpMsg('No unit selected — click one of your units in the world first.', true); return; }
+        const u = resolveTpUnit();
+        if (!u) { setTpMsg('No unit chosen — pick one from the list above (or select one in the world).', true); return; }
         const d = api.unitDisplay(u);
         setTpMsg('Teleporting ' + d.name + ' to (' + loc.x + ',' + loc.y + ')…');
         // Liveness check for the async read-back: the tab may have re-rendered (every open/tab
@@ -682,6 +810,7 @@ export function renderMapTab(container) {
                     api.lookAtPlot(loc);
                     _snapshotCache = null;   // re-read so the unit triangle moves on the minimap
                     redraw();
+                    buildTpPickList();       // refresh the picker's coords (don't touch the success msg)
                 } else if (r.fallback === 'move-order') {
                     setTpMsg('Teleport rejected by the engine — issued a normal move order instead; the unit will walk there if reachable (↻ to refresh).', true);
                 } else {
@@ -705,23 +834,24 @@ export function renderMapTab(container) {
         }
     };
 
-    // ── Click-and-drag navigation ────────────────────────────────────────────
-    // The canvas usually overflows its wrap (overflow:auto), and Gameface scrollbars are clumsy —
-    // so left-drag GRABS the map and scrolls the wrap directly. A press that moves less than the
-    // threshold is still a click (camera pan). Same window-listener pattern as the proven panel
-    // header drag in cheat-panel.js (mouse events keep flowing while the button is held).
+    // ── Click-and-drag navigation (transform pan) ─────────────────────────────
+    // Left-drag GRABS the map and pans it inside the viewport by translating the canvas (clamped so it
+    // can't be dragged off-screen). A press that moves less than the threshold is still a click (camera
+    // pan / teleport). Window listeners keep mouse events flowing while the button is held — the same
+    // proven pattern as the panel header drag in cheat-panel.js. Bound to the VIEWPORT so dragging
+    // works anywhere in the box, including any empty margin beside a narrow map.
     const DRAG_THRESHOLD_PX = 5;
-    canvas.addEventListener('mousedown', (e) => {
+    viewport.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;            // left button only
-        dragSt = { x: e.clientX, y: e.clientY, sl: canvasWrap.scrollLeft, st: canvasWrap.scrollTop, moved: false };
+        dragSt = { x: e.clientX, y: e.clientY, px: _state.panX, py: _state.panY, moved: false };
         const endDrag = (ev, asClick) => {
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
             const wasDrag = dragSt && dragSt.moved;
             dragSt = null;
-            canvas.style.cursor = 'crosshair';
+            viewport.style.cursor = 'grab';
             if (asClick && !wasDrag) handlePlotClick(ev);
-            else api.LOG('minimap drag end (scrolled to ' + canvasWrap.scrollLeft + ',' + canvasWrap.scrollTop + ')');
+            else api.LOG('minimap pan end (pan ' + Math.round(_state.panX) + ',' + Math.round(_state.panY) + ')');
         };
         const onMove = (ev) => {
             if (!dragSt) return;
@@ -730,12 +860,13 @@ export function renderMapTab(container) {
             const dx = ev.clientX - dragSt.x, dy = ev.clientY - dragSt.y;
             if (!dragSt.moved && (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX)) {
                 dragSt.moved = true;
-                canvas.style.cursor = 'grabbing';
+                viewport.style.cursor = 'grabbing';
                 tip.style.display = 'none';
             }
             if (dragSt.moved) {
-                canvasWrap.scrollLeft = dragSt.sl - dx;
-                canvasWrap.scrollTop  = dragSt.st - dy;
+                _state.panX = dragSt.px + dx;
+                _state.panY = dragSt.py + dy;
+                clampPan();
             }
         };
         const onUp = (ev) => endDrag(ev, true);
@@ -771,7 +902,7 @@ export function renderMapTab(container) {
     }
     const legendHint = document.createElement('span');
     legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem; white-space:normal;';
-    legendHint.textContent = 'hover = info · click = pan camera (teleport if armed above) · drag = scroll the minimap';
+    legendHint.textContent = 'hover = info · click = pan camera (teleport if armed above) · drag = pan the minimap · zoom in to pan farther';
     legend.appendChild(legendHint);
     container.appendChild(legend);
 
@@ -914,6 +1045,7 @@ export function renderMapTab(container) {
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
                 fitZoomToWidth(_snapshotCache.width);
                 drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+                sizeViewport(); clampPan();
                 buildSpotlightList();
                 setStatus();
             }, 0);
@@ -922,6 +1054,7 @@ export function renderMapTab(container) {
         if (_snapshotCache) {
             fitZoomToWidth(_snapshotCache.width);
             drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+            sizeViewport(); clampPan();
             setStatus();
         }
     };
