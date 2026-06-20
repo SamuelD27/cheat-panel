@@ -731,8 +731,11 @@ export function renderMapTab(container) {
         _state.panY = (ch <= vh) ? Math.round((vh - ch) / 2) : Math.min(0, Math.max(vh - ch, _state.panY));
         applyPan();
     };
-    // Shrink the viewport to the canvas when the map is short (no empty band), cap it when tall (pannable).
-    const sizeViewport = () => { viewport.style.height = Math.max(40, Math.min(canvas.height || VIEW_CAP_PX, VIEW_CAP_PX)) + 'px'; };
+    // NB: the viewport keeps a CONSTANT height (VIEW_CAP_PX, set in its CSS above). We deliberately do
+    // NOT shrink it to the canvas height — doing so made `ch <= vh` always true in clampPan(), which
+    // pinned panY to centre and KILLED vertical drag-pan for wide-and-short maps (and made the height
+    // jump mid-zoom). With a fixed box, vertical pan engages the moment the map is taller than the box,
+    // and clampPan() centres a shorter map in the (dark) letterbox band.
 
     const plotAtEvent = (e) => {
         if (!_snapshotCache || !_snapshotCache.width) return null;
@@ -1045,7 +1048,7 @@ export function renderMapTab(container) {
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
                 fitZoomToWidth(_snapshotCache.width);
                 drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
-                sizeViewport(); clampPan();
+                clampPan();
                 buildSpotlightList();
                 setStatus();
             }, 0);
@@ -1054,7 +1057,7 @@ export function renderMapTab(container) {
         if (_snapshotCache) {
             fitZoomToWidth(_snapshotCache.width);
             drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
-            sizeViewport(); clampPan();
+            clampPan();
             setStatus();
         }
     };

@@ -1,6 +1,43 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-13. Read this first to resume work._
+_Last updated: 2026-06-20. Read this first to resume work._
+
+## ▶ Current round (2026-06-20) — minimap pan rebuilt + teleport rebuilt in-panel
+
+User retested and reported: **(1)** the minimap still "can only zoom, not go left and right";
+**(2)** "teleport feature isn't there" (chose **No teleport button at all**); **(3)** keep new features
+**inside the UI, not outside**. For unit selection they chose **both** (in-panel list + world-selected).
+All **JS-only (`tab-map.js`) → Reload UI**, no restart. Deploy symlink confirmed current.
+
+| Report | Root cause | Fix | State |
+|---|---|---|---|
+| **Minimap won't pan left/right** | The old drag scrolled an `overflow:auto` box via `scrollLeft`, but `fitZoomToWidth` sizes the canvas to *fit* the panel width → zero horizontal overflow → nothing to scroll; Gameface `scrollLeft` is unreliable too. | Replaced with **transform-pan**: canvas is `position:absolute` in an `overflow:hidden` **viewport**, moved by `transform:translate(panX,panY)`; drag updates pan, `clampPan()` keeps it on-screen. Full 2-axis pan; zoom (−/+) zooms about the viewport centre. | 🟡 implemented, NOT verified |
+| **No teleport button at all** | Deploy is current (md5-matched, has the prominent button) → the running session predated the `ad4c545` reload (old easy-to-miss chip). | Rebuilt prominent **⚡ Teleport** toggle + an **in-panel unit picker** (`◎ World-selected` chip + one chip per unit; `resolveTpUnit()` re-resolves by ComponentID, falls back to world-selected = **"both"**). Defensive guards so no render-time API call can blank the section. | 🟡 implemented, NOT verified |
+| **Keep it inside the UI** | — | Viewport `overflow:hidden` clips the canvas; unit picker is inline; tooltip clamped inside the viewport. Nothing renders outside the frame. | 🟡 implemented, NOT verified |
+
+**Adversarial review (3-lens workflow) caught + fixed:** `sizeViewport()` was shrinking the viewport to
+the canvas height, which made `ch<=vh` always true in `clampPan()` → **vertical pan dead** for
+wide-and-short maps + a height jump mid-zoom. Fix: viewport keeps a **constant height** (`VIEW_CAP_PX`,
+26rem); `clampPan()` centres a short map in the dark letterbox band. (Removed `sizeViewport()` entirely.)
+
+⚠ **Still unverified engine probe:** true teleport uses `UNITOPERATION_TELEPORT_TO` (never confirmed to
+validate in this build). If the engine rejects it, the unit **walks** (MOVE_TO fallback) and the status
+line says so. The **far-land teleport message is the key probe** — report exactly what it says.
+
+### Test plan (Reload UI, then in order)
+1. **Teleport visible:** Map tab → a **── Teleport unit ──** divider + a wide **⚡ Teleport: OFF** button,
+   then a **Unit to teleport** list (a `◎ World-selected` chip + one chip per your units). All clearly
+   inside the panel.
+2. **Pick + teleport (in-panel):** click a unit chip (it highlights; status shows `[picked]`), click
+   **⚡ Teleport** to arm, then click a **far land tile on the minimap**. Status reports `Teleported ✓` /
+   `Arrived (walked)` / `rejected — move order issued` / `failed`. **Quote the far-land message.**
+3. **Teleport (world-selected):** leave it on `◎ World-selected`, select a unit in the world, arm, click
+   a minimap tile — same flow. (Both paths must work.)
+4. **Pan:** zoom **in** (+) a few times, then **left-drag the minimap** → it moves under the cursor in
+   **both** axes (grab cursor, tooltip hidden), and can't be dragged off the box. A plain click (<5px)
+   still pans the real camera / teleports if armed.
+5. **Inside the UI:** the minimap, tooltip, and unit list all stay **within the panel** — nothing spills
+   past the frame edges.
 
 ## ▶ Current round (2026-06-13) — in-game feedback on the 2026-06-12 items; 3 Map-tab fixes + terrain wall confirmed
 
