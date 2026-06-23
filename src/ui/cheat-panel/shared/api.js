@@ -187,27 +187,27 @@ export function duplicateSelectedUnit() {
     return duplicateUnit(u);
 }
 
-// ─── UNIT TELEPORT (Map tab, 2026-06-12) ──────────────────────────────
-// Instantly relocate an EXISTING unit (identity/XP/promotions preserved) to an arbitrary plot.
+// ─── UNIT TELEPORT (Map tab) ──────────────────────────────────────────
+// Relocate a unit to an arbitrary plot by DESTROY + RECREATE. The hidden UNITOPERATION_TELEPORT_TO
+// op is engine-walled from this isolate (build 23245653: it exists only as data rows in
+// base-standard/data/unit-operations.xml with ZERO JS call sites anywhere in the shipped game, so the
+// gameplay layer silently drops an isolate sendRequest — CONFIRMED in-game: the unit never moved and
+// the old code fell back to a MOVE_TO walk = the "rejected — move order issued" the user reported).
+// The working path is the one the in-game tuner and our M3 Duplicate use: CREATE_ELEMENT a same-type
+// unit at the destination, then delete the original via the proven UNITCOMMAND_DELETE. We create
+// FIRST and delete the original only AFTER the new unit is confirmed on the destination, so a failed
+// create can never lose the unit.
 //
-// Primary path: Game.UnitOperations.sendRequest(id, "UNITOPERATION_TELEPORT_TO", {X,Y}) — a HIDDEN
-// generic teleport op registered in base-standard/data/unit-operations.xml:34,:113
-// (VisibleInUI=false, "Travel to"; ZERO base JS call sites, so engine-side validation is
-// unverified). The transport itself (UnitOperations canStart/sendRequest with {X,Y} ints and a
-// ComponentID) is the proven UI-isolate pattern of the verified sibling
-// UNITOPERATION_TELEPORT_TO_CITY (base interface-mode-teleport-to-city.js:47).
+// TRADE-OFF: this is a FRESH same-type unit — XP, promotions, custom name, damage/movement state and
+// army membership are NOT preserved (CREATE_ELEMENT spawns a plain unit). For a cheat sandbox that is
+// acceptable; the Map-tab status line + a standing note disclose it. (Units.create is gameplay-SCRIPT
+// only and inert from this isolate — the M3 lesson — which is why CREATE_ELEMENT is used. An
+// identity-preserving Units.setLocation exists in base scripts but is unverified from the isolate.)
 //
-// sendRequest is fire-and-forget and the gameplay layer re-validates silently (the documented
-// "engine wall" pattern), so we POLL the unit's live location as the honest read-back. If the
-// teleport hasn't landed after ~3 polls we fall back to a normal UNITOPERATION_MOVE_TO order
-// (pathed walk — with the global ∞-move toggle it reaches anywhere passable) and report that
-// honestly via onDone({moved, fallback}). The destination is pre-validated with the same plot
-// rules as Duplicate (in-bounds / domain / not impassable / no enemy / no same-class stack).
-//
-// Supersession: repeat clicks are supported by design, so each new teleport invalidates any
-// in-flight poll chain — a superseded chain stops dead (no MOVE_TO fallback toward a stale
-// destination, no late onDone overwriting the new attempt's status line).
-let _tpSeq = 0;
+// The destination is pre-validated with the same plot rules as Duplicate (in-bounds / domain / not
+// impassable / no enemy / no same-class stack). Re-entry: the Map tab blocks a new teleport while one
+// is in flight (tab-map.js `tpInFlight`), so two create+delete chains can't run at once and strand a
+// duplicate (chain A creates unit-A, gets abandoned, chain B deletes the lone original → orphan).
 export function teleportUnitTo(unit, loc, opts = {}) {
     const onDone = opts.onDone || (() => {});
     if (!guardSP()) return { ok: false, reason: 'multiplayer' };
@@ -222,52 +222,53 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     const why = plotBlockReason(loc, def.Domain, def.FormationClass, id.owner);
     if (why) { LOG('teleportUnitTo: destination (' + loc.x + ',' + loc.y + ') blocked: ' + why); return { ok: false, reason: why }; }
 
-    // STEP 2/4: canStart probe — diagnostic only. For this hidden op an empty Plots set may just
-    // mean "no precomputed targets"; the sendRequest below is the real test.
-    try {
-        const can = Game.UnitOperations?.canStart?.(id, 'UNITOPERATION_TELEPORT_TO', { X: loc.x, Y: loc.y }, false);
-        LOG('teleportUnitTo: canStart TELEPORT_TO Success=' + (can ? can.Success : 'n/a')
-            + ' plots=' + (can && can.Plots ? can.Plots.length : 'n/a')
-            + ' reasons=' + (can && can.FailureReasons ? JSON.stringify(can.FailureReasons) : 'n/a'));
-    } catch (e) { ERR('teleportUnitTo: canStart probe failed:', e); }
+    // STEP 2/4: snapshot the units already on the destination, so the freshly-created one can be told
+    // apart (CREATE_ELEMENT is fire-and-forget and the new unit gets a brand-new ComponentID).
+    const owner = id.owner;
+    const utype = unit.type;
+    const keyOf = (cid) => cid.owner + ':' + cid.id;
+    const before = new Set();
+    try { for (const cid of MapUnits.getUnits(loc.x, loc.y)) before.add(keyOf(cid)); } catch (_) {}
 
-    // STEP 3/4: send the teleport request.
+    // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate / tuner path —
+    // Units.create is inert from this isolate; CREATE_ELEMENT is the working one).
     try {
-        Game.UnitOperations.sendRequest(id, 'UNITOPERATION_TELEPORT_TO', { X: loc.x, Y: loc.y });
-        LOG('teleportUnitTo: TELEPORT_TO sent — unit', id.id, '(' + from.x + ',' + from.y + ') -> (' + loc.x + ',' + loc.y + ')');
-    } catch (e) { ERR('teleportUnitTo: sendRequest failed:', e); return { ok: false, reason: 'send-failed' }; }
+        Game.PlayerOperations.sendRequest(owner, 'CREATE_ELEMENT',
+            { Kind: 'UNIT', Type: utype, Location: { x: loc.x, y: loc.y }, Owner: owner, IndependentIndex: -1 });
+        LOG('teleportUnitTo: CREATE_ELEMENT ' + def.UnitType + ' at (' + loc.x + ',' + loc.y + ') [from (' + from.x + ',' + from.y + ')]');
+    } catch (e) { ERR('teleportUnitTo: CREATE_ELEMENT failed:', e); return { ok: false, reason: 'send-failed' }; }
 
-    // STEP 4/4: honest read-back — poll the live location; declare success the moment it lands.
-    const seq = ++_tpSeq;
-    let polls = 0, fellBack = false;
+    // STEP 4/4: poll the destination for the new unit; the moment it appears, delete the ORIGINAL so
+    // this reads as a move (not a duplicate). If the create never seats a unit, leave the original be.
+    // (No supersession token: the Map tab serializes teleports via tpInFlight, so each chain always
+    // runs to completion — abandoning a chain mid-flight would strand its freshly-created unit.)
+    let polls = 0;
+    const findNew = () => {
+        try {
+            for (const cid of MapUnits.getUnits(loc.x, loc.y)) {
+                if (cid.owner !== owner || before.has(keyOf(cid))) continue;
+                const u = Units.get(cid);
+                if (u && u.type === utype) return cid;     // the freshly-created same-type unit
+            }
+        } catch (_) {}
+        return null;
+    };
     const poll = () => {
-        if (seq !== _tpSeq) { LOG('teleportUnitTo: chain #' + seq + ' superseded by a newer teleport — stopped'); return; }
-        let now = null;
-        try { now = Units.get(id)?.location || null; } catch (_) {}
         polls++;
-        if (now && now.x === loc.x && now.y === loc.y) {
-            LOG('teleportUnitTo: CONFIRMED at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s)' + (fellBack ? ' (via move-order fallback)' : ''));
-            onDone({ moved: true, fallback: fellBack ? 'move-order' : null, loc });
+        const fresh = findNew();
+        if (fresh) {
+            deleteUnit(id);   // remove the original (proven UNITCOMMAND_DELETE); XP/promotions are lost
+            LOG('teleportUnitTo: arrived at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s); original ' + id.id + ' deleted');
+            onDone({ moved: true, newId: fresh, loc });
             return;
         }
-        if (!fellBack && polls >= 3 && opts.fallbackMove !== false) {
-            // ~0.8s with no movement: the engine silently rejected the teleport → pathed move.
-            fellBack = true;
-            try {
-                const mods = (typeof UnitOperationMoveModifiers !== 'undefined')
-                    ? UnitOperationMoveModifiers.MOVE_IGNORE_UNEXPLORED_DESTINATION : 0;
-                Game.UnitOperations.sendRequest(id, 'UNITOPERATION_MOVE_TO', { X: loc.x, Y: loc.y, Modifiers: mods });
-                LOG('teleportUnitTo: TELEPORT_TO did not land — fell back to MOVE_TO (unit walks)');
-            } catch (e) { ERR('teleportUnitTo: MOVE_TO fallback failed:', e); }
-        }
-        if (polls < 8) setTimeout(poll, 250);
+        if (polls < 8) setTimeout(poll, 200);
         else {
-            LOG('teleportUnitTo: gave up — unit at (' + (now ? now.x + ',' + now.y : '?') + ') after ' + polls + ' polls'
-                + (fellBack ? '; move order issued, unit will walk if reachable' : ''));
-            onDone({ moved: false, fallback: fellBack ? 'move-order' : null, loc });
+            LOG('teleportUnitTo: CREATE_ELEMENT did not seat a unit at (' + loc.x + ',' + loc.y + ') after ' + polls + ' polls — original left intact');
+            onDone({ moved: false, loc });
         }
     };
-    setTimeout(poll, 200);
+    setTimeout(poll, 150);
     return { ok: true, reason: 'sent' };
 }
 

@@ -556,6 +556,24 @@ export function renderMapTab(container) {
     zoomGroup.appendChild(mkZoom(-2, '−', 'Zoom out'));
     zoomGroup.appendChild(mkZoom( 2, '+', 'Zoom in'));
 
+    // ⤢ Fit — drop to the whole-map overview zoom (clampPan/centerPanOn then centre it). Sets
+    // userZoomed so the default fit-to-overflow doesn't immediately re-zoom it on the next redraw.
+    const fitBtn = document.createElement('button');
+    fitBtn.className = 'lcp-row-btn';
+    fitBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem; min-width:2rem;';
+    fitBtn.textContent = '⤢';
+    fitBtn.title = 'Fit the whole map in the panel (overview)';
+    fitBtn.addEventListener('click', () => {
+        const W = _snapshotCache && _snapshotCache.width;
+        if (!W) return;
+        _state.userZoomed = true;
+        const zMax = Math.min(34, maxZoomForMap(W, _snapshotCache.height));
+        _state.zoom = Math.max(2, Math.min(zMax, fitMapZoom(W, _snapshotCache.height)));
+        redraw();
+        centerPanOn();
+    });
+    zoomGroup.appendChild(fitBtn);
+
     const refreshBtn = document.createElement('button');
     refreshBtn.className = 'lcp-row-btn';
     refreshBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem; font-size:1.5rem;';
@@ -572,7 +590,8 @@ export function renderMapTab(container) {
     // Cities/Resources/Me, so it read as just another filter and was easy to miss). Pick the unit from
     // the IN-PANEL list (or leave it on "World-selected" to use the in-world selection — "both" paths
     // supported), arm, then click a destination tile ON THE MINIMAP — the unit teleports there
-    // (api.teleportUnitTo: hidden UNITOPERATION_TELEPORT_TO, with read-back + pathed-move fallback).
+    // (api.teleportUnitTo: destroy+recreate — spawns a fresh same-type unit at the target and deletes
+    // the original, since true UNITOPERATION_TELEPORT_TO is engine-walled in this build).
     // The whole flow stays inside the panel. Stays armed for repeat teleports; re-arms fresh on every
     // tab open (tpArmed / tpPickedId are deliberately local, NOT module-level _state).
     const tpSection = document.createElement('div');
@@ -582,6 +601,7 @@ export function renderMapTab(container) {
 
     let tpArmed = false;
     let tpPickedId = null;   // ComponentID of an in-panel-picked unit; null = use the world-selected unit
+    let tpInFlight = false;  // one teleport at a time — a destroy+recreate chain must finish before the next
 
     const tpBtn = document.createElement('button');
     tpBtn.className = 'lcp-toggle-btn';   // full-width prominent toggle (same widget as the ∞-move button)
@@ -592,6 +612,13 @@ export function renderMapTab(container) {
     tpMsg.style.cssText = 'font-size:0.85rem; color:#a89878; margin:0.25rem 0 0.3rem 0; min-height:1.1em;';
     const setTpMsg = (text, warn) => { tpMsg.textContent = text || ''; tpMsg.style.color = warn ? '#e6b800' : '#a89878'; };
     container.appendChild(tpMsg);
+
+    // Standing disclosure of the destroy+recreate trade-off (true UNITOPERATION_TELEPORT_TO is engine-
+    // walled in this build, so teleport spawns a fresh same-type unit and deletes the original).
+    const tpNote = document.createElement('div');
+    tpNote.style.cssText = 'font-size:0.72rem; color:#8a7c5c; margin:0 0 0.35rem 0;';
+    tpNote.textContent = 'Note: teleport spawns a fresh same-type unit at the target — XP, promotions, custom name, current HP/moves and army membership are not kept.';
+    container.appendChild(tpNote);
 
     // In-panel unit picker — pick WHICH unit to teleport without leaving the panel. Header has a small
     // ↻ to re-read the unit list (units move/spawn). Chips are custom buttons (never native <select>,
@@ -731,6 +758,23 @@ export function renderMapTab(container) {
         _state.panY = (ch <= vh) ? Math.round((vh - ch) / 2) : Math.min(0, Math.max(vh - ch, _state.panY));
         applyPan();
     };
+    // Centre the viewport on a focus plot (capital / unit) if given, else on the map centre. Used on
+    // the initial draw + the Fit button so an OVERFLOWING (pannable) map opens showing something useful
+    // rather than its top-left corner; clampPan() then keeps it on-screen.
+    const centerPanOn = (fx, fy) => {
+        const vw = viewport.clientWidth, vh = viewport.clientHeight;
+        const cw = canvas.width, ch = canvas.height;
+        if (!vw || !vh || !cw || !ch) return;
+        if (Number.isFinite(fx) && Number.isFinite(fy) && _snapshotCache && _snapshotCache.height) {
+            const c = plotCenter(fx, fy, _snapshotCache.height, _state.zoom);
+            _state.panX = Math.round(vw / 2 - c.cx);
+            _state.panY = Math.round(vh / 2 - c.cy);
+        } else {
+            _state.panX = Math.round((vw - cw) / 2);
+            _state.panY = Math.round((vh - ch) / 2);
+        }
+        clampPan();
+    };
     // NB: the viewport keeps a CONSTANT height (VIEW_CAP_PX, set in its CSS above). We deliberately do
     // NOT shrink it to the canvas height — doing so made `ch <= vh` always true in clampPan(), which
     // pinned panY to centre and KILLED vertical drag-pan for wide-and-short maps (and made the height
@@ -784,6 +828,7 @@ export function renderMapTab(container) {
         const loc = plotAtEvent(e);
         if (!loc) return;
         if (!tpArmed) { api.lookAtPlot(loc); return; }
+        if (tpInFlight) { setTpMsg('Teleport already in progress — wait for it to finish…', true); return; }
 
         const u = resolveTpUnit();
         if (!u) { setTpMsg('No unit chosen — pick one from the list above (or select one in the world).', true); return; }
@@ -803,25 +848,26 @@ export function renderMapTab(container) {
         };
         const res = api.teleportUnitTo(u, loc, {
             onDone: (r) => {
+                tpInFlight = false;   // chain finished (success or give-up) — re-arm for the next click
                 if (!tpLive()) {
                     api.LOG('teleport result ignored — Map tab re-rendered/closed (moved=' + r.moved + ')');
                     if (r.moved) _snapshotCache = null;   // next open re-reads → triangle is current
                     return;
                 }
                 if (r.moved) {
-                    setTpMsg((r.fallback ? 'Arrived (walked) at (' : 'Teleported ✓ (') + loc.x + ',' + loc.y + ') — ' + d.name);
+                    setTpMsg('Teleported ✓ (' + loc.x + ',' + loc.y + ') — ' + d.name + ' · fresh unit (XP/promotions not kept)');
                     api.lookAtPlot(loc);
                     _snapshotCache = null;   // re-read so the unit triangle moves on the minimap
                     redraw();
                     buildTpPickList();       // refresh the picker's coords (don't touch the success msg)
-                } else if (r.fallback === 'move-order') {
-                    setTpMsg('Teleport rejected by the engine — issued a normal move order instead; the unit will walk there if reachable (↻ to refresh).', true);
                 } else {
-                    setTpMsg('Teleport failed — the engine did not move the unit (UI.log: "LCP: teleportUnitTo").', true);
+                    setTpMsg('Teleport failed — the engine did not place a unit at (' + loc.x + ',' + loc.y + '); the original is unchanged (UI.log: "LCP: teleportUnitTo").', true);
                 }
             },
         });
-        if (!res.ok) {
+        if (res.ok) {
+            tpInFlight = true;   // chain started — block another teleport until onDone fires
+        } else {
             const why = {
                 'same-plot': 'The unit is already on that tile.',
                 'mountain': 'Destination is a mountain.',
@@ -832,6 +878,9 @@ export function renderMapTab(container) {
                 'sameclass': 'A same-class unit already occupies that tile.',
                 'offmap': 'That tile is outside the map.',
                 'multiplayer': 'Blocked in multiplayer.',
+                'bad-loc': 'Invalid destination tile.',
+                'no-unit': 'No unit to teleport.',
+                'send-failed': 'The engine refused the teleport (see UI.log).',
             }[res.reason] || ('Blocked: ' + res.reason);
             setTpMsg(why, true);
         }
@@ -905,7 +954,7 @@ export function renderMapTab(container) {
     }
     const legendHint = document.createElement('span');
     legendHint.style.cssText = 'flex:1 1 100%; color:#8a7c5c; font-size:0.82rem; margin-top:0.1rem; white-space:normal;';
-    legendHint.textContent = 'hover = info · click = pan camera (teleport if armed above) · drag = pan the minimap · zoom in to pan farther';
+    legendHint.textContent = 'hover = info · click = pan camera (teleport if armed above) · drag = move around the map · −/+ zoom · ⤢ fit whole map';
     legend.appendChild(legendHint);
     container.appendChild(legend);
 
@@ -1024,17 +1073,34 @@ export function renderMapTab(container) {
         previewMsg.textContent = msg;
     };
 
-    // Auto-fit zoom so the map fills the panel width (until the user manually zooms). The canvas is
-    // W+0.5 tiles wide (the +0.5 is the odd-row hex offset); fit to the content area minus the wrap
-    // chrome (~12px padding+border). This removes the empty space beside smaller maps.
-    const fitZoomToWidth = (W) => {
+    // Zoom that fits the WHOLE map inside the viewport in BOTH axes (overview) — used by the ⤢ Fit
+    // button. (A width-only fit overflowed the fixed-height viewport vertically on tall maps, so the
+    // "fit whole map" label was a lie; fit the tighter axis so the entire map is actually visible.)
+    const fitMapZoom = (W, H) => {
+        const vw = viewport.clientWidth || container.clientWidth || 0;
+        const vh = viewport.clientHeight || VIEW_CAP_PX;
+        if (!vw || !W || !H) return _state.zoom;
+        const hPerTile = (2 / SQRT3) + (H - 1) * (1.5 / SQRT3);   // canvas height per px of tileSize
+        return Math.max(2, Math.min(Math.floor((vw - 4) / (W + 0.5)), Math.floor((vh - 4) / hPerTile)));
+    };
+    // Default zoom = "fit to OVERFLOW": size the map modestly LARGER than the viewport in BOTH axes so
+    // a click-and-drag has real left/right AND up/down range the moment the tab opens. The old
+    // fit-to-WIDTH sized the canvas to exactly fit the panel → zero horizontal overflow → horizontal
+    // pan was dead until the user manually zoomed in (the repeated "can only zoom, not go left/right"
+    // report). The ⤢ Fit button restores the whole-map overview. Capped to the safe canvas budget.
+    const OVERFLOW = 1.18;
+    const fitZoomDefault = (W) => {
         const H = _snapshotCache && _snapshotCache.height;
         const zMax = Math.min(34, maxZoomForMap(W, H));   // never exceed the safe canvas budget
         if (_state.userZoomed) { _state.zoom = Math.min(_state.zoom, zMax); return; }
-        const avail = container.clientWidth;
-        if (!avail || avail < 40 || !W) return;
-        const z = Math.floor((avail - 12) / (W + 0.5));
-        if (z >= 2) _state.zoom = Math.max(2, Math.min(zMax, z));
+        const vw = viewport.clientWidth || container.clientWidth;
+        const vh = viewport.clientHeight || VIEW_CAP_PX;
+        if (!vw || vw < 40 || !W || !H) return;
+        const zForW = (vw * OVERFLOW) / (W + 0.5);
+        const hPerTile = (2 / SQRT3) + (H - 1) * (1.5 / SQRT3);   // canvas height per px of tileSize
+        const zForH = (vh * OVERFLOW) / hPerTile;
+        const z = Math.ceil(Math.max(zForW, zForH));             // overflow the harder axis → both pan
+        _state.zoom = Math.max(2, Math.min(zMax, z));
     };
 
     const redraw = () => {
@@ -1046,16 +1112,20 @@ export function renderMapTab(container) {
                 catch (e) { api.ERR('getMapSnapshot failed:', e); previewMsg.textContent = 'Snapshot failed (see UI.log).'; _snapshotInFlight = false; return; }
                 _snapshotInFlight = false;
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
-                fitZoomToWidth(_snapshotCache.width);
+                fitZoomDefault(_snapshotCache.width);
                 drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
-                clampPan();
+                // Open centred on the capital (else first city / first unit / map centre) so an
+                // overflowing map shows something useful immediately and drags out from there.
+                const foc = (_snapshotCache.cities || []).find(c => c.isCapital)
+                    || (_snapshotCache.cities || [])[0] || (_snapshotCache.myUnits || [])[0];
+                centerPanOn(foc && foc.x, foc && foc.y);
                 buildSpotlightList();
                 setStatus();
             }, 0);
             return;
         }
         if (_snapshotCache) {
-            fitZoomToWidth(_snapshotCache.width);
+            fitZoomDefault(_snapshotCache.width);
             drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
             clampPan();
             setStatus();

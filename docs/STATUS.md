@@ -1,6 +1,37 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-20. Read this first to resume work._
+_Last updated: 2026-06-23. Read this first to resume work._
+
+## ▶ Current round (2026-06-23) — minimap pan + teleport REBUILT on proven engine paths
+
+User retested (2026-06-23): **(1)** minimap "still not navigable by click-and-drag"; **(2)** teleport
+"doesn't work (engine rejected)" — the key probe we'd awaited since 2026-06-12. Both root-caused with an
+adversarially-verified investigation workflow, then rebuilt on PROVEN APIs. All **JS-only → Reload UI**.
+
+| Report | Root cause (verified) | Fix | State |
+|---|---|---|---|
+| **Teleport engine-rejected** | `UNITOPERATION_TELEPORT_TO` is a hidden op with **ZERO JS call sites** in the whole shipped game (`unit-operations.xml:34,:113`, VisibleInUI=false) → no validated UI entry point → the gameplay layer silently drops the isolate `sendRequest`. The "rejected — move order issued" the user saw was our own MOVE_TO fallback. Confirmed engine wall for that op. | Rewrote `teleportUnitTo` (`api.js`) as **DESTROY + RECREATE**: `CREATE_ELEMENT` a same-type unit at the destination (the M3-verified Duplicate/tuner path), poll the dest plot for the new unit, then `deleteUnit(original)` via the proven `UNITCOMMAND_DELETE`. Create-FIRST so a failed create never loses the unit. **Trade-off:** fresh same-type unit — XP/promotions/name/HP/army NOT kept (disclosed in a standing note + the success line). | 🟡 implemented, NOT verified |
+| **Minimap won't pan left/right** | Panel is **78rem** wide; `fitZoomToWidth` auto-fit the canvas to the panel WIDTH → canvas a few px narrower than the viewport → `clampPan` pinned panX to centre → horizontal drag discarded. (Vertical worked: canvas ~659px tall > the fixed 416px viewport — exactly "can only zoom, not go left/right".) | Replaced with **fit-to-OVERFLOW** default (`fitZoomDefault`): map opens modestly larger than the viewport in BOTH axes so drag has range immediately; opens **centred on the capital** (`centerPanOn`); added a **⤢ Fit** button (`fitMapZoom`, true both-axes overview). Drag plumbing unchanged (it was already sound — same window-listener pattern as the working header drag). | 🟡 implemented, NOT verified |
+
+**Adversarial review (3-lens workflow) caught + fixed a BLOCKER:** the armed button + the old `_tpSeq`
+supersession let a fast double-click strand the first-created unit as a permanent duplicate. Fixed with a
+one-at-a-time `tpInFlight` guard (UI) + removed the supersession bail (`api.js`) so each create+delete chain
+always runs to completion. Also fixed: ⤢ now fits both axes (honest label), full teleport reason-map
+strings, fuller disclosure note.
+
+⚠ **Known edge (untested):** if `CREATE_ELEMENT` ever seats the unit on a different plot than requested,
+`findNew` (dest-plot scan) would miss it → reported "failed", off-plot unit left. M3 proves CREATE honors
+`Location`, so low risk — watch for it during the test.
+
+### Test plan (Reload UI, then in order)
+1. **Teleport works:** Map tab → pick a unit chip (or `◎ World-selected` with a unit selected in-world) →
+   **⚡ Teleport** to arm → click a far **land** tile. Status: `Teleported ✓ … fresh unit`. The unit appears
+   there (camera pans), the OLD tile is empty. (Fresh same-type unit — XP/promotions gone, per the note.)
+2. **Teleport guards:** click **water** for a land unit / a **mountain** / an **occupied** tile → a clear
+   refusal, no unit created. Double-click two tiles fast → 2nd says "already in progress", **no duplicate** left.
+3. **Minimap pans left/right:** open Map tab → it opens zoomed-in, centred on your capital → **left-drag** → it
+   moves in BOTH axes (grab cursor, tooltip hidden). A plain click (<5px) still pans the camera / teleports if armed.
+4. **Fit:** click **⤢** → the whole map fits the panel (overview). Then zoom **−/+** and drag again.
 
 ## ▶ Current round (2026-06-20) — minimap pan rebuilt + teleport rebuilt in-panel
 
