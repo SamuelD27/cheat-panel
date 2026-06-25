@@ -1,6 +1,33 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-23. Read this first to resume work._
+_Last updated: 2026-06-25. Read this first to resume work._
+
+## ▶ Current round (2026-06-25) — GAME PATCHED to 1.4.1; teleport delete-step fixed (UNITCOMMAND_DELETE → DESTROY_ELEMENT)
+
+User retested after a **game update landed (1.4.0 build 23245653 → 1.4.1 build 22163 / change 1267347)**:
+teleport "still doesn't work." Root-caused **live via the tuner** (port 4318 was up this time): the
+destroy+recreate teleport's CREATE step works and the new unit is detected, but the delete-the-original
+step was silently rejected — `canStart("UNITCOMMAND_DELETE")` now returns `{Success:false}` on 1.4.1, so
+the original was never removed → the unit was **duplicated, not moved**. (The same break silently disabled
+the per-row unit Delete too.) `DESTROY_ELEMENT` — the tuner's lower-level element removal — still works
+(verified live: throwaway unit created then removed, plot confirmed empty).
+
+**Fix (JS-only → Reload UI):** `deleteUnit()` (`api.js`) now uses `Game.PlayerOperations.sendRequest(owner,
+'DESTROY_ELEMENT', {Kind:'UNIT', Owner, LocalID})` instead of `UNITCOMMAND_DELETE`. One change fixes BOTH
+teleport (the original is now removed → a true move) and the per-row unit Delete. Teleport's
+create / detect / destroy primitives were each verified individually on the live 1.4.1 game via the tuner.
+
+⚠ **Docs now stale:** parent `Civ7/CLAUDE.md` + `docs/*` still say target build 23245653 / 1.4.0. The live
+game is **1.4.1 (build 22163, change 1267347)**. Re-run `extract_types` / re-verify patch-sensitive API when
+convenient; nothing else in this mod is known-broken by 1.4.1 (Units.*, CREATE_ELEMENT, MapUnits, Camera,
+Players all confirmed present + working live).
+
+### Test plan (Reload UI)
+1. **Teleport MOVES (not duplicates):** Map tab → pick your unit → **⚡ Teleport** → click a far land tile.
+   The unit should be at the destination **and gone from its old tile** (one unit, relocated). Status:
+   `Teleported ✓ … fresh unit`. (Watch specifically that there is NOT a leftover copy at the start tile.)
+2. **Per-row Delete** (Units tab) also works again — same `DESTROY_ELEMENT` fix.
+3. **Minimap pan / ⤢ Fit** as in the 2026-06-23 plan below (unchanged this round).
 
 ## ▶ Current round (2026-06-23) — minimap pan + teleport REBUILT on proven engine paths
 

@@ -89,20 +89,21 @@ export function lookAtUnit(u) {
 }
 
 /**
- * Delete a unit. Uses UNITCOMMAND_DELETE — the unconditional in-game "remove unit" (the trash
- * button). We previously sent UNITCOMMAND_DISBAND, but disband is an ACTIVE_PRIMARY contextual
- * command whose canStart() can reject silently (sendRequest then no-ops without throwing), which is
- * why the confirm dialog appeared but nothing happened. Commands also expect the standard parameter
- * block {X,Y,UnitAbilityType}, not {} (verified in base unit-actions.js processCommand()).
+ * Remove a unit via the DESTROY_ELEMENT player operation — the in-game tuner's removal path
+ * (base tuner-input.js). NOT the UNITCOMMAND_DELETE unit-command: as of game update **1.4.1**,
+ * `canStart("UNITCOMMAND_DELETE")` returns `{Success:false}` (verified live via the tuner) so the
+ * command is silently rejected and the unit never goes away — which on 1.4.1 broke both the per-row
+ * Delete AND the teleport (destroy+recreate left a DUPLICATE because the original was never removed).
+ * DESTROY_ELEMENT is the lower-level element-lifecycle op (no command-gating) and was confirmed live
+ * to remove the unit on 1.4.1. (Older note, kept for history: we'd earlier moved DISBAND→DELETE because
+ * DISBAND's canStart rejected silently; 1.4.1 now does the same to DELETE, hence DESTROY_ELEMENT.)
  */
 export function deleteUnit(unitId) {
     if (!guardSP()) return;
     try {
-        const params = { X: -9999, Y: -9999, UnitAbilityType: -1 };
-        const check = Game.UnitCommands?.canStart?.(unitId, "UNITCOMMAND_DELETE", params, false);
-        if (check && check.Success === false) ERR('deleteUnit: canStart(UNITCOMMAND_DELETE) not allowed:', check);
-        Game.UnitCommands.sendRequest(unitId, "UNITCOMMAND_DELETE", params);
-        LOG('deleted unit', unitId?.id);
+        const owner = unitId?.owner ?? GameContext.localPlayerID;
+        Game.PlayerOperations.sendRequest(owner, "DESTROY_ELEMENT", { Kind: "UNIT", Owner: owner, LocalID: unitId.id });
+        LOG('deleted unit', unitId?.id, 'via DESTROY_ELEMENT');
     } catch (e) { ERR('deleteUnit failed:', e); }
 }
 
@@ -194,9 +195,11 @@ export function duplicateSelectedUnit() {
 // gameplay layer silently drops an isolate sendRequest — CONFIRMED in-game: the unit never moved and
 // the old code fell back to a MOVE_TO walk = the "rejected — move order issued" the user reported).
 // The working path is the one the in-game tuner and our M3 Duplicate use: CREATE_ELEMENT a same-type
-// unit at the destination, then delete the original via the proven UNITCOMMAND_DELETE. We create
-// FIRST and delete the original only AFTER the new unit is confirmed on the destination, so a failed
-// create can never lose the unit.
+// unit at the destination, then delete the original via DESTROY_ELEMENT (deleteUnit). We create FIRST
+// and delete the original only AFTER the new unit is confirmed on the destination, so a failed create
+// can never lose the unit. NB (1.4.1): the original code deleted via UNITCOMMAND_DELETE, which 1.4.1
+// rejects (canStart Success:false) → the original was never removed → a DUPLICATE, not a teleport;
+// deleteUnit now uses DESTROY_ELEMENT (verified live on 1.4.1).
 //
 // TRADE-OFF: this is a FRESH same-type unit — XP, promotions, custom name, damage/movement state and
 // army membership are NOT preserved (CREATE_ELEMENT spawns a plain unit). For a cheat sandbox that is
@@ -257,7 +260,7 @@ export function teleportUnitTo(unit, loc, opts = {}) {
         polls++;
         const fresh = findNew();
         if (fresh) {
-            deleteUnit(id);   // remove the original (proven UNITCOMMAND_DELETE); XP/promotions are lost
+            deleteUnit(id);   // remove the original (DESTROY_ELEMENT — 1.4.1 rejects UNITCOMMAND_DELETE); XP/promotions lost
             LOG('teleportUnitTo: arrived at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s); original ' + id.id + ' deleted');
             onDone({ moved: true, newId: fresh, loc });
             return;
