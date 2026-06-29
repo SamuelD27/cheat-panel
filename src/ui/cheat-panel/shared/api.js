@@ -225,51 +225,59 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     const why = plotBlockReason(loc, def.Domain, def.FormationClass, id.owner);
     if (why) { LOG('teleportUnitTo: destination (' + loc.x + ',' + loc.y + ') blocked: ' + why); return { ok: false, reason: why }; }
 
-    // STEP 2/4: snapshot the units already on the destination, so the freshly-created one can be told
-    // apart (CREATE_ELEMENT is fire-and-forget and the new unit gets a brand-new ComponentID).
+    // STEP 2/4: snapshot (a) the units already on the destination and (b) ALL of the player's unit ids,
+    // so the freshly-created one can be told apart at the destination OR detected if the engine seats it
+    // off-target. CREATE_ELEMENT is fire-and-forget and the new unit gets a brand-new ComponentID.
     const owner = id.owner;
     const utype = unit.type;
     const keyOf = (cid) => cid.owner + ':' + cid.id;
     const before = new Set();
     try { for (const cid of MapUnits.getUnits(loc.x, loc.y)) before.add(keyOf(cid)); } catch (_) {}
+    const allBefore = new Set();
+    try { for (const u of getLocalUnits()) if (u && u.id) allBefore.add(keyOf(u.id)); } catch (_) {}
 
-    // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate / tuner path —
-    // Units.create is inert from this isolate; CREATE_ELEMENT is the working one).
+    // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate path — Units.create
+    // is inert from this isolate; CREATE_ELEMENT is the working one).
+    let createSent = false;
     try {
         Game.PlayerOperations.sendRequest(owner, 'CREATE_ELEMENT',
             { Kind: 'UNIT', Type: utype, Location: { x: loc.x, y: loc.y }, Owner: owner, IndependentIndex: -1 });
+        createSent = true;
         LOG('teleportUnitTo: CREATE_ELEMENT ' + def.UnitType + ' at (' + loc.x + ',' + loc.y + ') [from (' + from.x + ',' + from.y + ')]');
     } catch (e) { ERR('teleportUnitTo: CREATE_ELEMENT failed:', e); return { ok: false, reason: 'send-failed' }; }
 
-    // STEP 4/4: poll the destination for the new unit; the moment it appears, delete the ORIGINAL so
-    // this reads as a move (not a duplicate). If the create never seats a unit, leave the original be.
-    // (No supersession token: the Map tab serializes teleports via tpInFlight, so each chain always
-    // runs to completion — abandoning a chain mid-flight would strand its freshly-created unit.)
+    // STEP 4/4: poll for the new unit. Prefer one seated AT the destination; the moment it appears,
+    // delete the ORIGINAL (so this reads as a move, not a duplicate). Detection is by "a NEW owned
+    // ComponentID at the destination" — deliberately NOT gated on type-match, which is fragile across
+    // patches. On give-up, return a rich diag (createSent, dest unit-count before→after, whether a unit
+    // appeared elsewhere) because panel-isolate logs don't reach UI.log — the Map tab surfaces it.
+    // (No supersession token: the Map tab serializes teleports via tpInFlight, so each chain runs to
+    // completion — abandoning one mid-flight would strand its freshly-created unit.)
     let polls = 0;
-    const findNew = () => {
-        try {
-            for (const cid of MapUnits.getUnits(loc.x, loc.y)) {
-                if (cid.owner !== owner || before.has(keyOf(cid))) continue;
-                const u = Units.get(cid);
-                if (u && u.type === utype) return cid;     // the freshly-created same-type unit
-            }
-        } catch (_) {}
+    const destCount = () => { try { return MapUnits.getUnits(loc.x, loc.y).length; } catch (_) { return -1; } };
+    const newAtDest = () => {
+        try { for (const cid of MapUnits.getUnits(loc.x, loc.y)) if (cid.owner === owner && !before.has(keyOf(cid))) return cid; } catch (_) {}
+        return null;
+    };
+    const newElsewhere = () => {
+        try { for (const u of getLocalUnits()) if (u && u.id && !allBefore.has(keyOf(u.id))) return u; } catch (_) {}
         return null;
     };
     const poll = () => {
         polls++;
-        const fresh = findNew();
+        const fresh = newAtDest();
         if (fresh) {
             deleteUnit(id);   // remove the original (DESTROY_ELEMENT — 1.4.1 rejects UNITCOMMAND_DELETE); XP/promotions lost
             LOG('teleportUnitTo: arrived at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s); original ' + id.id + ' deleted');
-            onDone({ moved: true, newId: fresh, loc });
+            onDone({ moved: true, newId: fresh, loc, diag: { createSent, destBefore: before.size, destAfter: destCount(), polls } });
             return;
         }
-        if (polls < 8) setTimeout(poll, 200);
-        else {
-            LOG('teleportUnitTo: CREATE_ELEMENT did not seat a unit at (' + loc.x + ',' + loc.y + ') after ' + polls + ' polls — original left intact');
-            onDone({ moved: false, loc });
-        }
+        if (polls < 8) { setTimeout(poll, 200); return; }
+        const elsewhere = newElsewhere();
+        const diag = { createSent, destBefore: before.size, destAfter: destCount(),
+            placedElsewhere: (elsewhere && elsewhere.location) ? { x: elsewhere.location.x, y: elsewhere.location.y } : null, polls };
+        LOG('teleportUnitTo: no unit seated at (' + loc.x + ',' + loc.y + ') after ' + polls + ' polls; diag=' + JSON.stringify(diag));
+        onDone({ moved: false, loc, diag });
     };
     setTimeout(poll, 150);
     return { ok: true, reason: 'sent' };

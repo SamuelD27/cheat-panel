@@ -861,7 +861,11 @@ export function renderMapTab(container) {
                     redraw();
                     buildTpPickList();       // refresh the picker's coords (don't touch the success msg)
                 } else {
-                    setTpMsg('Teleport failed — the engine did not place a unit at (' + loc.x + ',' + loc.y + '); the original is unchanged (UI.log: "LCP: teleportUnitTo").', true);
+                    const dg = r.diag || {};
+                    let extra = ' [create=' + (dg.createSent ? 'sent' : 'NO') + ', dest units ' + dg.destBefore + '→' + dg.destAfter;
+                    if (dg.placedElsewhere) extra += ', a NEW unit appeared at (' + dg.placedElsewhere.x + ',' + dg.placedElsewhere.y + ')';
+                    extra += ', polls=' + dg.polls + ']';
+                    setTpMsg('Teleport failed — no unit placed at (' + loc.x + ',' + loc.y + ').' + extra, true);
                 }
             },
         });
