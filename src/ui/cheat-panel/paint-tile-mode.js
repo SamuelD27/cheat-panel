@@ -130,6 +130,7 @@ class LcpPaintTileMode extends LcpPlotMode {
         const typeString = this.Context?.TypeString;
         if (!category || !typeString) return;
 
+        api.diag('commit:' + category + '=' + typeString + ',@' + plot.x + '/' + plot.y);
         const ok = api.paintPlot(category, typeString, { x: plot.x, y: plot.y });
         if (!this._activeOverlay) return;
         const fillColor = ok ? COMMIT_FILL : REJECT_FILL;

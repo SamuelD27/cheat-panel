@@ -296,6 +296,9 @@ class ScreenCheatPanel extends Panel {
 
     onAttach() {
         this.playAnimateInSound();
+        // Initialise the UI.log breadcrumb sink on the panel document as early as possible, so paint /
+        // wonder diagnostics still surface even when the paint mode has closed the panel (see api.diag).
+        try { api.diagInit(this.Root.ownerDocument); } catch (_) {}
         this.Root.addEventListener(InputEngineEventName, this.engineInputListener);
 
         if (this.cheatFrame) {

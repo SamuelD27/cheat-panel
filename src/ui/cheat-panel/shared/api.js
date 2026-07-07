@@ -15,6 +15,38 @@ import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
 export const LOG = (...a) => console.log('LCP:', ...a);
 export const ERR = (...a) => console.error('LCP:', ...a);
 
+// ─── UI.log breadcrumb channel (panel isolate) ────────────────────────
+// console.log / console.error from THIS Gameface UI isolate do NOT reliably reach UI.log (verified:
+// tab-map/api "LCP:" lines never appear on disk, though the dock's console.error does). But assigning
+// a NON-<length> string to an element's style.maxWidth makes the engine synchronously emit
+//   Trying to set "maxWidth" property to invalid value: <str>
+// into UI.log — PROVEN, since tab-map's PROBE_* breadcrumbs surface there. We reuse that as a log sink
+// WE can read from disk after an in-game test — the only reliable way to observe this isolate.
+//   • prefix 'LCPD' so it's greppable and (for maxWidth) never a valid length → always logs
+//   • a monotonic counter makes every emission a UNIQUE value, so two identical events both log
+//   • ALSO console.error (reaches UI.log from the dock / interface-mode contexts, e.g. paint mode
+//     which closes the panel and detaches the maxWidth element) — belt-and-suspenders across contexts
+let _diagEl = null, _diagDoc = null, _diagN = 0;
+export function diagInit(doc) {
+    try {
+        if (doc) _diagDoc = doc;
+        if (!_diagDoc && typeof document !== 'undefined') _diagDoc = document;
+        if (!_diagEl && _diagDoc) {
+            _diagEl = _diagDoc.createElement('div');
+            _diagEl.style.display = 'none';
+            (_diagDoc.body || _diagDoc.documentElement).appendChild(_diagEl);
+        }
+    } catch (_) { /* diagnostics must never break the panel */ }
+}
+export function diag(str) {
+    _diagN++;
+    try { console.error('LCPD:' + _diagN + ':' + str); } catch (_) {}
+    try {
+        if (!_diagEl) diagInit();
+        if (_diagEl) _diagEl.style.maxWidth = 'LCPD~' + _diagN + '~' + str;
+    } catch (_) {}
+}
+
 // ─── Single-player guard ──────────────────────────────────────────────
 // Research.md suggested `Game.maxPlayers > 1`, but maxPlayers is the civ-slot count (always > 1),
 // so that would block cheats even in single-player. The base UI detects multiplayer via
@@ -232,9 +264,13 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     const utype = unit.type;
     const keyOf = (cid) => cid.owner + ':' + cid.id;
     const before = new Set();
-    try { for (const cid of MapUnits.getUnits(loc.x, loc.y)) before.add(keyOf(cid)); } catch (_) {}
+    let mapUnitsErr = '';
+    try { for (const cid of MapUnits.getUnits(loc.x, loc.y)) before.add(keyOf(cid)); }
+    catch (e) { mapUnitsErr = String(e && e.message || e); }
     const allBefore = new Set();
     try { for (const u of getLocalUnits()) if (u && u.id) allBefore.add(keyOf(u.id)); } catch (_) {}
+    diag('tp.env:MapUnits=' + (typeof MapUnits) + ',destBefore=' + before.size + ',allBefore=' + allBefore.size
+        + (mapUnitsErr ? ',MapUnitsErr=' + mapUnitsErr : '') + ',to=' + loc.x + '/' + loc.y + ',from=' + from.x + '/' + from.y);
 
     // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate path — Units.create
     // is inert from this isolate; CREATE_ELEMENT is the working one).
@@ -244,7 +280,8 @@ export function teleportUnitTo(unit, loc, opts = {}) {
             { Kind: 'UNIT', Type: utype, Location: { x: loc.x, y: loc.y }, Owner: owner, IndependentIndex: -1 });
         createSent = true;
         LOG('teleportUnitTo: CREATE_ELEMENT ' + def.UnitType + ' at (' + loc.x + ',' + loc.y + ') [from (' + from.x + ',' + from.y + ')]');
-    } catch (e) { ERR('teleportUnitTo: CREATE_ELEMENT failed:', e); return { ok: false, reason: 'send-failed' }; }
+        diag('tp.create:sent,' + def.UnitType + ',@' + loc.x + '/' + loc.y);
+    } catch (e) { ERR('teleportUnitTo: CREATE_ELEMENT failed:', e); diag('tp.create:THROW,' + String(e && e.message || e)); return { ok: false, reason: 'send-failed' }; }
 
     // STEP 4/4: poll for the new unit. Prefer one seated AT the destination; the moment it appears,
     // delete the ORIGINAL (so this reads as a move, not a duplicate). Detection is by "a NEW owned
@@ -269,15 +306,18 @@ export function teleportUnitTo(unit, loc, opts = {}) {
         if (fresh) {
             deleteUnit(id);   // remove the original (DESTROY_ELEMENT — 1.4.1 rejects UNITCOMMAND_DELETE); XP/promotions lost
             LOG('teleportUnitTo: arrived at (' + loc.x + ',' + loc.y + ') after ' + polls + ' poll(s); original ' + id.id + ' deleted');
+            diag('tp.result:MOVED,polls=' + polls + ',dest=' + before.size + '>' + destCount());
             onDone({ moved: true, newId: fresh, loc, diag: { createSent, destBefore: before.size, destAfter: destCount(), polls } });
             return;
         }
         if (polls < 8) { setTimeout(poll, 200); return; }
         const elsewhere = newElsewhere();
-        const diag = { createSent, destBefore: before.size, destAfter: destCount(),
+        const dg = { createSent, destBefore: before.size, destAfter: destCount(),
             placedElsewhere: (elsewhere && elsewhere.location) ? { x: elsewhere.location.x, y: elsewhere.location.y } : null, polls };
-        LOG('teleportUnitTo: no unit seated at (' + loc.x + ',' + loc.y + ') after ' + polls + ' polls; diag=' + JSON.stringify(diag));
-        onDone({ moved: false, loc, diag });
+        LOG('teleportUnitTo: no unit seated at (' + loc.x + ',' + loc.y + ') after ' + polls + ' polls; diag=' + JSON.stringify(dg));
+        diag('tp.result:FAIL,polls=' + polls + ',create=' + (dg.createSent ? 'sent' : 'no') + ',dest=' + dg.destBefore + '>' + dg.destAfter
+            + ',elsewhere=' + (dg.placedElsewhere ? (dg.placedElsewhere.x + '/' + dg.placedElsewhere.y) : 'none'));
+        onDone({ moved: false, loc, diag: dg });
     };
     setTimeout(poll, 150);
     return { ok: true, reason: 'sent' };
@@ -637,6 +677,7 @@ export function paintPlot(category, typeString, loc) {
             ERR('paintPlot: unknown category', category);
             return false;
         }
+        const biomeWas = readPaintType('Biome', loc);   // pre-write biome — proves/disproves engine coercion on a terrain paint
         wbEdit(() => {
             if (clearing) {
                 WorldBuilder.MapPlots.setResource(ResourceTypes.NO_RESOURCE, loc, 0);
@@ -654,6 +695,18 @@ export function paintPlot(category, typeString, loc) {
         const got = readPaintType(category, loc);
         const ok = clearing ? (got == null) : (got === typeString);
         LOG('paint', category, (clearing ? 'CLEAR' : typeString), 'at (' + loc.x + ',' + loc.y + ') ->', ok ? 'OK' : ('rejected; now ' + got));
+        // Full plot read-back so the "navigable river → desert" report resolves in ONE line. The minimap
+        // colours a land tile by BIOME (tab-map colorForPlot only paints NAV_RIVER blue when isWater), so
+        // we also log isWater + riverType — the exact inputs it keys on — plus the biome BEFORE the write.
+        // Interpretation: water=false & terr=NAV_RIVER ⇒ minimap mis-colour (fix colorForPlot); water=true
+        // yet desert on-screen ⇒ colorForPlot bug; biomeWas≠biome ⇒ the engine coerced the biome.
+        // isWater/getRiverType are wrapped so a throw here can't flip paintPlot's return value to false.
+        diag('paint:' + category + '=' + (clearing ? 'CLEAR' : typeString) + ',@' + loc.x + '/' + loc.y
+            + ',ok=' + ok + ',now=' + got
+            + ',terr=' + readPaintType('Terrain', loc) + ',biomeWas=' + biomeWas + ',biome=' + readPaintType('Biome', loc)
+            + ',feat=' + readPaintType('Feature', loc)
+            + ',water=' + (() => { try { return GameplayMap.isWater(loc.x, loc.y); } catch (_) { return '?'; } })()
+            + ',river=' + (() => { try { return GameplayMap.getRiverType(loc.x, loc.y); } catch (_) { return '?'; } })());
         return ok;
     } catch (e) { ERR('paintPlot failed:', e); return false; }
 }
@@ -696,6 +749,13 @@ export function placeNaturalWonder(featureType, loc) {
         const ok = (got === featureType);
         LOG('placeNaturalWonder', featureType, '(' + tiles + '-tile) at (' + loc.x + ',' + loc.y + ') terrain', terrain, 'biome', biome,
             '| feature now', got, '| isNaturalWonder', isNW, '->', ok ? 'OK' : 'rejected');
+        // Log the ACTUAL on-tile terrain/biome after prep (not just the requested need*), so a rejected
+        // wonder is attributable: terrNow==needTerr && biomeNow==needBiome && !ok ⇒ setFeature is walled
+        // even with correct prep; terrNow≠needTerr (or biomeNow≠needBiome) ⇒ the prep setter itself was
+        // silently dropped. This nw: line is the ONLY breadcrumb for a wonder (paintPlot returns earlier).
+        diag('nw:' + featureType + ',@' + loc.x + '/' + loc.y + ',tiles=' + tiles + ',needTerr=' + terrain + ',needBiome=' + biome
+            + ',terrNow=' + readPaintType('Terrain', loc) + ',biomeNow=' + readPaintType('Biome', loc)
+            + ',TB=' + (typeof TerrainBuilder) + ',featNow=' + got + ',isNW=' + isNW + ',ok=' + ok);
         return ok;
     } catch (e) { ERR('placeNaturalWonder failed:', e); return false; }
 }
@@ -711,6 +771,8 @@ export function enterPaintMode({ category, typeString }, opts = {}) {
         // a same-mode switchTo() no-ops and keeps the OLD Category/TypeString. Exit first.
         try { if (InterfaceMode.getCurrent && InterfaceMode.getCurrent() === 'INTERFACEMODE_LCP_PAINT_TILE') InterfaceMode.switchToDefault(); } catch (_) {}
         const ok = InterfaceMode.switchTo('INTERFACEMODE_LCP_PAINT_TILE', { Category: category, TypeString: typeString });
+        diag('enterPaint:' + category + '=' + typeString + ',switchTo=' + ok
+            + ',cur=' + (() => { try { return InterfaceMode.getCurrent && InterfaceMode.getCurrent(); } catch (_) { return '?'; } })());
         if (ok === false) { ERR('enterPaintMode: switchTo refused INTERFACEMODE_LCP_PAINT_TILE'); return false; }
         LOG('enterPaintMode: entered for', category, '=', typeString);
         return true;

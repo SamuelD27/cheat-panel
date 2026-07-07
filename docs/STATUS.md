@@ -1,6 +1,48 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-06-25. Read this first to resume work._
+_Last updated: 2026-07-07. Read this first to resume work._
+
+## ▶ Current round (2026-07-07) — DIAGNOSTIC build: self-readable UI.log breadcrumbs for 4 open bugs
+
+User retested on **1.4.1** and reported four still-broken things: **(1)** minimap click-and-drag doesn't
+pan; **(2)** teleport "failed"; **(3)** natural wonders can't be placed; **(4)** painting a navigable
+river yields a **desert biome**. Every prior fix round for (1)/(2) was a blind guess — because
+**panel-isolate `console.log`/`console.error` do NOT reach `UI.log`** (confirmed: the user's session left
+only the *dock's* 2 `LCP:` lines; nothing from teleport/paint). So we could never see what actually
+happened inside the panel.
+
+**Observability breakthrough (this round):** the minimap draw-probe already proves ONE channel *does*
+reach `UI.log` from this isolate — assigning a non-`<length>` string to `element.style.maxWidth` makes
+the engine synchronously log `Trying to set "maxWidth" property to invalid value: <str>` (the
+`PROBE_*` lines are right there in `UI.log`). Added `api.diag(str)` / `api.diagInit(doc)` (`api.js`) on
+that channel (+ `console.error` as a second channel for the dock / interface-mode contexts), and
+instrumented all four paths. **The developer reads the truth straight out of `UI.log`** —
+`grep 'LCPD' UI.log` — so the user only has to test **once** and transcribe nothing. JS-only → Reload UI.
+
+What each breadcrumb resolves (all tagged `LCPD~<n>~…` / `LCPD:<n>:…`):
+| Bug | Breadcrumb | Discriminates |
+|---|---|---|
+| Teleport | `tp.env` (`typeof MapUnits`, dest/all counts), `tp.create`, `tp.result` | CREATE_ELEMENT never seats a unit **vs** `MapUnits` detection dead (unit made but undetected → duplicate left) **vs** seated off-target (`elsewhere`) |
+| Minimap drag | `drag.down` (cw/vw/ch/vh), `drag.move` (fires at all?), `drag.pan` (req vs clamp) | mousedown not firing **vs** window-`mousemove` dead **vs** `clampPan` pinning because canvas ≤ viewport (no overflow) |
+| Wonder | `enterPaint` (switchTo), `commit`, `nw:` (needTerr/biome vs terrNow/biomeNow, `typeof TerrainBuilder`, isNW) | mode switch fails **vs** clicks never reach `commitPlot` **vs** prep setter dropped **vs** `setFeature` walled with correct prep **vs** multi-tile |
+| River→desert | `paint:` (terr, biomeWas→biome, feat, **isWater**, **riverType**) | engine coerced biome **vs** minimap mis-colours a NAV_RIVER land tile (colorForPlot only blues it when `isWater`) |
+
+Adversarially reviewed the diff (2-lens workflow); 3 confirmed completeness gaps fixed before ship
+(pre-write `biomeWas`, actual post-prep `terrNow/biomeNow` on wonders, one-shot `drag.move`), and a
+regression trap avoided (raw `GameplayMap.isWater/getRiverType` inside `paintPlot`'s `try` would flip its
+return to false on a throw → guarded in IIFEs). No behaviour changed; this build only *observes*.
+
+### Test plan (Reload UI — one pass, then hand back; do NOT restart)
+Do each once; order doesn't matter. Nothing to copy down — just do them and say "done":
+1. **Minimap drag:** Map tab → left-press on the map and drag left/right and up/down.
+2. **Teleport:** Map tab → pick a unit → **⚡ Teleport** (arm) → click a far **land** tile.
+3. **Paint navigable river:** Creative tab → **Terrain** → pick *Navigable River* → **Paint at clicked
+   tile** → click a **land** tile (note the green/red flash).
+4. **Place a natural wonder:** Creative tab → **Wonder** → pick a **single-tile** wonder (NOT one marked
+   "not placeable") → Paint → click a land tile.
+
+Then tell me it's done — I read `UI.log` (`LCPD` lines) and root-cause all four, no guessing.
+Next round = the actual fixes, targeted by that evidence.
 
 ## ▶ Current round (2026-06-25) — GAME PATCHED to 1.4.1; teleport delete-step fixed (UNITCOMMAND_DELETE → DESTROY_ELEMENT)
 

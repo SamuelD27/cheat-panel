@@ -492,6 +492,7 @@ const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s
  */
 export function renderMapTab(container) {
     if (!container) return;
+    try { api.diagInit(container.ownerDocument || document); } catch (_) {}   // UI.log breadcrumb sink (see api.diag)
     const renderGen = ++_renderGen;   // see _renderGen — staleness token for this render's closures
 
     container.innerHTML = '';
@@ -899,7 +900,12 @@ export function renderMapTab(container) {
     const DRAG_THRESHOLD_PX = 5;
     viewport.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;            // left button only
-        dragSt = { x: e.clientX, y: e.clientY, px: _state.panX, py: _state.panY, moved: false };
+        dragSt = { x: e.clientX, y: e.clientY, px: _state.panX, py: _state.panY, moved: false, logged: false, movLogged: false };
+        // Geometry breadcrumb: does mousedown fire, and is there room to pan? (cw>vw / ch>vh). If the
+        // canvas is NOT larger than the viewport, clampPan() pins pan to centre → drag can't move it.
+        api.diag('drag.down:cw=' + canvas.width + ',vw=' + viewport.clientWidth + ',ch=' + canvas.height
+            + ',vh=' + viewport.clientHeight + ',pan=' + Math.round(_state.panX) + '/' + Math.round(_state.panY)
+            + ',zoom=' + _state.zoom);
         const endDrag = (ev, asClick) => {
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
@@ -911,6 +917,13 @@ export function renderMapTab(container) {
         };
         const onMove = (ev) => {
             if (!dragSt) return;
+            // One-shot: proves the window mousemove is delivered AT ALL, independent of the 5px threshold
+            // below. drag.move present but drag.pan absent ⇒ moved under threshold / clamp path; drag.move
+            // ABSENT with drag.down present ⇒ window mousemove is dead in this isolate (the real suspect).
+            if (!dragSt.movLogged) {
+                dragSt.movLogged = true;
+                api.diag('drag.move:dx=' + (ev.clientX - dragSt.x) + ',dy=' + (ev.clientY - dragSt.y) + ',buttons=' + ev.buttons);
+            }
             // Lost the mouseup (cursor left the panel doc)? Treat a buttons-up move as a cancel.
             if (typeof ev.buttons === 'number' && (ev.buttons & 1) === 0) { endDrag(ev, false); return; }
             const dx = ev.clientX - dragSt.x, dy = ev.clientY - dragSt.y;
@@ -922,7 +935,17 @@ export function renderMapTab(container) {
             if (dragSt.moved) {
                 _state.panX = dragSt.px + dx;
                 _state.panY = dragSt.py + dy;
+                const reqX = _state.panX, reqY = _state.panY;   // requested, pre-clamp
                 clampPan();
+                // One breadcrumb per drag: did the move fire, and did clampPan() eat the requested pan?
+                // reqX !== clampX (and clampX stuck at centre) ⇒ the canvas doesn't overflow → root cause.
+                if (!dragSt.logged) {
+                    dragSt.logged = true;
+                    api.diag('drag.pan:reqX=' + Math.round(reqX) + ',clampX=' + Math.round(_state.panX)
+                        + ',reqY=' + Math.round(reqY) + ',clampY=' + Math.round(_state.panY)
+                        + ',cw=' + canvas.width + ',vw=' + viewport.clientWidth
+                        + ',ch=' + canvas.height + ',vh=' + viewport.clientHeight);
+                }
             }
         };
         const onUp = (ev) => endDrag(ev, true);
