@@ -272,6 +272,22 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     diag('tp.env:MapUnits=' + (typeof MapUnits) + ',destBefore=' + before.size + ',allBefore=' + allBefore.size
         + (mapUnitsErr ? ',MapUnitsErr=' + mapUnitsErr : '') + ',to=' + loc.x + '/' + loc.y + ',from=' + from.x + '/' + from.y);
 
+    // STEP 2.5/4: CREATE_ELEMENT silently NO-OPs on UNREVEALED (fog-of-war) tiles. Proven live via the
+    // tuner (2026-07-11): a founder create on rev=0 tiles seated 0 units, while the SAME create on
+    // revealed tiles (rev=2, incl. TERRAIN_NAVIGABLE_RIVER) succeeded — every prior "teleport failed"
+    // was a click into unexplored fog. Reveal the destination first so the engine will seat the unit.
+    // Visibility.changeVisibilityCountForPlots signature confirmed live: (playerId, delta, plotIndexArray).
+    try {
+        const wasRev = GameplayMap.getRevealedState(owner, loc.x, loc.y);
+        if (wasRev === 0) {
+            if (typeof Visibility !== 'undefined' && Visibility.changeVisibilityCountForPlots) {
+                Visibility.changeVisibilityCountForPlots(owner, 1, [GameplayMap.getIndexFromLocation(loc)]);
+            }
+            diag('tp.reveal:from=' + wasRev + ',to=' + GameplayMap.getRevealedState(owner, loc.x, loc.y)
+                + ',Vis=' + (typeof Visibility));
+        }
+    } catch (e) { diag('tp.reveal:THROW,' + String(e && e.message || e)); }
+
     // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate path — Units.create
     // is inert from this isolate; CREATE_ELEMENT is the working one).
     let createSent = false;
