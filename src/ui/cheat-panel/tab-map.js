@@ -586,6 +586,36 @@ export function renderMapTab(container) {
 
     container.appendChild(filterRow);
 
+    // ── Reveal Map cheat ──────────────────────────────────────────────────────
+    // Uncovers the whole map for the local player (Visibility.revealAllPlots — verified live 2026-07-13).
+    // One-way (reload a save to restore fog). Does NOT enable teleport to the far hemisphere — unit
+    // placement on Distant Lands is a separate engine age-rule (see api.teleportUnitTo).
+    const revealRow = document.createElement('div');
+    revealRow.style.cssText = 'display:flex; align-items:center; gap:0.5rem; margin:0.1rem 0 0.3rem;';
+    const revealBtn = document.createElement('button');
+    revealBtn.className = 'lcp-row-btn';
+    revealBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem;';
+    revealBtn.textContent = '🗺 Reveal Map';
+    revealBtn.title = 'Uncover the entire map (fog-of-war off). One-way — reload a save to restore fog.';
+    const revealMsg = document.createElement('span');
+    revealMsg.style.cssText = 'font-size:0.75rem; color:#b7a88a;';
+    revealMsg.textContent = 'Fog-of-war: hidden tiles are covered.';
+    revealBtn.addEventListener('click', () => {
+        const ok = api.revealEntireMap();
+        if (ok) {
+            revealMsg.textContent = 'Map revealed ✓ — fog off (reload a save to restore it).';
+            revealMsg.style.color = '#8fce8f';
+            _snapshotCache = null;   // re-read so newly-revealed terrain paints on the minimap
+            setTimeout(() => { redraw(); }, 60);   // let the reveal process a frame before re-snapshot
+        } else {
+            revealMsg.textContent = 'Reveal failed — see UI.log.';
+            revealMsg.style.color = '#d98a8a';
+        }
+    });
+    revealRow.appendChild(revealBtn);
+    revealRow.appendChild(revealMsg);
+    container.appendChild(revealRow);
+
     // ── Teleport section ──────────────────────────────────────────────────────
     // A full-width LABELED toggle (it used to be a small .lcp-row-btn chip sat right next to
     // Cities/Resources/Me, so it read as just another filter and was easy to miss). Pick the unit from
@@ -885,6 +915,7 @@ export function renderMapTab(container) {
                 'multiplayer': 'Blocked in multiplayer.',
                 'bad-loc': 'Invalid destination tile.',
                 'no-unit': 'No unit to teleport.',
+                'distant-lands': 'Can\'t teleport to Distant Lands — the engine won\'t place units on the far hemisphere this age. Pick a tile on your home continent.',
                 'send-failed': 'The engine refused the teleport (see UI.log).',
             }[res.reason] || ('Blocked: ' + res.reason);
             setTpMsg(why, true);

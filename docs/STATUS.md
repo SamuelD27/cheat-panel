@@ -1,8 +1,71 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-07-07. Read this first to resume work._
+_Last updated: 2026-07-13. Read this first to resume work._
 
-## ▶ Current round (2026-07-07) — DIAGNOSTIC build: self-readable UI.log breadcrumbs for 4 open bugs
+## ▶ Current round (2026-07-13) — teleport REAL root cause = DISTANT LANDS (not fog); fix + Reveal Map committed; pending Reload-UI verify
+
+Live tuner debugging (game running, ctx 65535) overturned the 2026-07-11 "fog" RCA. Controlled create
+trials on a fully-revealed map isolated the true gate: **`CREATE_ELEMENT` cannot place a unit on a
+Distant Lands tile** (`Players.get(owner).isDistantLands({x,y})===true`) — the Civ7 age-rule that units
+can't exist on the far hemisphere this age. Home-continent tiles (isDistantLands=false, continent 19)
+placed fine even far + formerly-fogged; foreign tiles (isDistantLands=true, continent 28) stayed blocked
+even after `revealAllPlots` revealed them. The 2026-07-11 fog theory was a **confound** (the fogged
+failures were also distant-lands; the revealed successes were also home-continent). **Fog does not block
+create.** Also confirmed dead-ends: native `UNITOPERATION_TELEPORT_TO` is walled to Teleport-ability
+units (founder Teleport=false → canStart=false); per-tile reveal APIs are silent no-ops from the isolate;
+only `Visibility.revealAllPlots(p)` works (whole-map, reflects next frame). **⚠ Never call
+`WorldBuilder.startBlock()` from the tuner/isolate — it froze the game this round (needs force-quit).**
+
+**Fixes committed this round (JS-only → Reload UI):**
+1. **Teleport distant-lands guard** (`api.js` teleportUnitTo STEP 1.5): if the clicked tile is Distant
+   Lands, return `{ok:false, reason:'distant-lands'}` → Map tab shows *"Can't teleport to Distant Lands
+   — pick a tile on your home continent."* instead of a silent "failed". Teleport works to ANY
+   home-continent tile (create+detect+destroy all verified live). Removed the dead fog-reveal block from
+   commit 21b2d01.
+2. **🗺 Reveal Map cheat** (`api.revealEntireMap()` = `Visibility.revealAllPlots`; button in Map tab):
+   uncovers the whole map (one-way; reload restores fog). Verified live. Does NOT unlock distant-lands
+   teleport (separate engine wall).
+
+**PENDING Reload-UI verify:** (a) teleport a unit to a HOME-continent tile → moves; (b) teleport to a
+far/ocean (Distant Lands) tile → clear message, no silent fail; (c) 🗺 Reveal Map → whole map uncovers.
+Note: the live game's map is already revealed (done during debugging with user consent). Other 3 bugs
+(minimap sizing, river/desert paint, wonders) still pending — now fast to root-cause via the live tuner.
+
+### (prior) 2026-07-11 — teleport fog RCA (SUPERSEDED — was a confound; real cause is Distant Lands above)
+
+The 2026-07-07 diagnostic build paid off. User teleported a founder; UI.log `LCPD` breadcrumbs +
+`net_message_debug.log` gave ground truth, and the game was left running so the **live tuner** (ctx
+65535 in-match exposes `Game`/`GameplayMap`/`MapUnits`/`WorldBuilder`/`Visibility`) settled the RCA
+with controlled experiments — no more guessing.
+
+**Teleport RCA (PROVEN, 4 controlled live trials):** `CREATE_ELEMENT` silently seats **0 units on an
+UNREVEALED (fog-of-war, `getRevealedState==0`) tile**, regardless of terrain or unit type.
+- warrior @106/57 (rev=2, HILL) → ✅ placed
+- founder @110/57 (rev=2, NAVIGABLE_RIVER) → ✅ placed  ← river terrain is NOT a blocker
+- founder @78/36 (rev=0, NAVIGABLE_RIVER) → ❌ 0 units  ← the tile the panel actually used
+- founder @72/2 (rev=0, FLAT) → ❌ 0 units
+So every prior "teleport failed" was a click into unexplored fog. `MapUnits` was never the bug (it
+reports correctly). The request DID reach GameCore (`net_message_debug.log` SEND+RECV) — a native
+gameplay-layer placement rejection, not plumbing.
+
+**Fix (committed 21b2d01):** `teleportUnitTo` reveals the destination before the create via
+`Visibility.changeVisibilityCountForPlots(owner, 1, [plotIndex])` — signature confirmed live (a
+wrong-arg-order probe logged `expected Array…argument 2` / `expected 3 args`, pinning it to
+`(playerId, delta, plotIndexArray)`).
+
+**PENDING live verify (do NOT claim fixed yet):** (a) confirm `Visibility` is defined in the
+**panel-lcp isolate** (only confirmed in root-game ctx so far — if absent, the guarded reveal no-ops
+and teleport still fails; needs an alternate reveal path); (b) reveal→create seats a unit end-to-end;
+(c) user clicks Teleport to a fog tile → unit moves. Also: **2 test units were spawned during the
+live experiment** (warrior @106/57, 2nd founder @110/57) — delete via DESTROY_ELEMENT next session.
+
+**Bonus RCA — minimap drag (from the same log):** `drag.down cw=1542 vw=2041 ch=835 vh=700` → canvas
+is NARROWER than its viewport (cw<vw) so horizontal pan is correctly clamped (nothing to scroll into);
+vertical overflows so up/down works. The minimap bug is a **sizing** problem (viewport measured wider
+than the canvas), not drag plumbing. River/desert-paint + wonder RCAs still pending their breadcrumbs
+(user only tested teleport this round) — now live-probeable via the tuner.
+
+### (prior) 2026-07-07 — DIAGNOSTIC build: self-readable UI.log breadcrumbs for 4 open bugs
 
 User retested on **1.4.1** and reported four still-broken things: **(1)** minimap click-and-drag doesn't
 pan; **(2)** teleport "failed"; **(3)** natural wonders can't be placed; **(4)** painting a navigable

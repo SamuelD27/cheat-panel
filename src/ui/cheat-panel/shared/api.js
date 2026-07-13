@@ -257,6 +257,20 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     const why = plotBlockReason(loc, def.Domain, def.FormationClass, id.owner);
     if (why) { LOG('teleportUnitTo: destination (' + loc.x + ',' + loc.y + ') blocked: ' + why); return { ok: false, reason: why }; }
 
+    // STEP 1.5/4: Distant-Lands guard — the REAL cause of "teleport failed" (proven live via tuner
+    // 2026-07-13, NOT fog as earlier believed). CREATE_ELEMENT silently seats 0 units on a Distant
+    // Lands tile (Players.get(owner).isDistantLands({x,y})===true) — the engine age-rule that units
+    // can't exist on the far hemisphere this age. Home-continent tiles (distantLands=false) place fine
+    // regardless of fog. Reject early with a clear reason instead of the old silent create-then-fail.
+    try {
+        const player = Players.get(id.owner);
+        if (player && typeof player.isDistantLands === 'function' && player.isDistantLands({ x: loc.x, y: loc.y })) {
+            diag('tp.block:distant-lands,@' + loc.x + '/' + loc.y);
+            LOG('teleportUnitTo: destination (' + loc.x + ',' + loc.y + ') is Distant Lands — engine forbids unit placement there this age');
+            return { ok: false, reason: 'distant-lands' };
+        }
+    } catch (e) { diag('tp.dlcheck:THROW,' + String(e && e.message || e)); }
+
     // STEP 2/4: snapshot (a) the units already on the destination and (b) ALL of the player's unit ids,
     // so the freshly-created one can be told apart at the destination OR detected if the engine seats it
     // off-target. CREATE_ELEMENT is fire-and-forget and the new unit gets a brand-new ComponentID.
@@ -271,22 +285,6 @@ export function teleportUnitTo(unit, loc, opts = {}) {
     try { for (const u of getLocalUnits()) if (u && u.id) allBefore.add(keyOf(u.id)); } catch (_) {}
     diag('tp.env:MapUnits=' + (typeof MapUnits) + ',destBefore=' + before.size + ',allBefore=' + allBefore.size
         + (mapUnitsErr ? ',MapUnitsErr=' + mapUnitsErr : '') + ',to=' + loc.x + '/' + loc.y + ',from=' + from.x + '/' + from.y);
-
-    // STEP 2.5/4: CREATE_ELEMENT silently NO-OPs on UNREVEALED (fog-of-war) tiles. Proven live via the
-    // tuner (2026-07-11): a founder create on rev=0 tiles seated 0 units, while the SAME create on
-    // revealed tiles (rev=2, incl. TERRAIN_NAVIGABLE_RIVER) succeeded — every prior "teleport failed"
-    // was a click into unexplored fog. Reveal the destination first so the engine will seat the unit.
-    // Visibility.changeVisibilityCountForPlots signature confirmed live: (playerId, delta, plotIndexArray).
-    try {
-        const wasRev = GameplayMap.getRevealedState(owner, loc.x, loc.y);
-        if (wasRev === 0) {
-            if (typeof Visibility !== 'undefined' && Visibility.changeVisibilityCountForPlots) {
-                Visibility.changeVisibilityCountForPlots(owner, 1, [GameplayMap.getIndexFromLocation(loc)]);
-            }
-            diag('tp.reveal:from=' + wasRev + ',to=' + GameplayMap.getRevealedState(owner, loc.x, loc.y)
-                + ',Vis=' + (typeof Visibility));
-        }
-    } catch (e) { diag('tp.reveal:THROW,' + String(e && e.message || e)); }
 
     // STEP 3/4: create a same-type unit AT the destination (the proven M3 Duplicate path — Units.create
     // is inert from this isolate; CREATE_ELEMENT is the working one).
@@ -344,6 +342,24 @@ export function teleportSelectedUnitTo(loc, opts = {}) {
     const u = getSelectedUnit();
     if (!u) { LOG('teleportSelectedUnitTo: no unit selected'); return { ok: false, reason: 'no-selection' }; }
     return teleportUnitTo(u, loc, opts);
+}
+
+/**
+ * Reveal the ENTIRE map for the local player (fog-of-war cheat). Uses Visibility.revealAllPlots —
+ * confirmed live 2026-07-13 (reveals all 128×N plots; getRevealedState reflects it on the next frame).
+ * One-way: there is no un-reveal (reload a save to restore fog). NOTE this does NOT enable teleport to
+ * the far hemisphere — unit placement on Distant Lands is a separate engine age-rule (see teleportUnitTo).
+ * Returns true if the reveal call was made.
+ */
+export function revealEntireMap() {
+    if (!guardSP()) return false;
+    try {
+        const p = GameContext.localPlayerID;
+        if (typeof Visibility === 'undefined' || !Visibility.revealAllPlots) { ERR('revealEntireMap: Visibility.revealAllPlots unavailable'); return false; }
+        Visibility.revealAllPlots(p);
+        LOG('revealEntireMap: revealAllPlots(' + p + ') sent — whole map revealed (reload to restore fog)');
+        return true;
+    } catch (e) { ERR('revealEntireMap failed:', e); return false; }
 }
 
 /** Refresh the on-screen movement-point indicator after a movement restore (known cosmetic bug). */
