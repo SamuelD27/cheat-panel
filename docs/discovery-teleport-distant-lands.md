@@ -188,3 +188,42 @@ Run these once the game is loaded (Antiquity, a save with a reachable distant-la
    **Pass:** `after > before` → the distant gate does **not** block naval units on distant *water*, proving the refusal is land/placement-specific and narrowing where the bypass must act. (**Fail** = 0-unit seat → the gate is universal across domains.)
 
 Report each probe's raw JSON. A "pass" on any of probes 1, 2, 4, or 5 constitutes a code-confirmed breach of the corresponding wall and should be re-run 2-3 times (different tiles) before being treated as reliable, given the 1.4.1-vs-1.4.0 version drift.
+---
+
+## ★ Addendum (orchestrator, 2026-07-14) — the ACTUAL reason units can't leave the home continent
+
+Phase-1's T6 concluded Wall 4 stands because no modifier flips a *"distant lands allowed"* property. That
+is still literally true, but it **missed the real mechanism**, found by direct grep afterwards. Distant
+lands are unreachable in Antiquity not because of a distant-lands flag, but because of **embarkation tier**:
+
+- **[VERIFIED]** Embarkation tiers are data rows, and each maps to the terrain it may enter —
+  `base-standard/data/unit-movement.xml`: `<Row EmbarkationType="UNIT_EMBARKATION_DEEP_WATER" TerrainType="TERRAIN_OCEAN"/>`
+  (SHALLOW_WATER maps only to `TERRAIN_COAST` + `TERRAIN_NAVIGABLE_RIVER`; INLAND_WATER only to river).
+- **[VERIFIED]** Antiquity's Sailing tech grants only the **shallow** tier —
+  `age-antiquity/data/progression-trees-tech-gameeffects.xml:36`:
+  `<Modifier id="MOD_SAILING_EMBARKATION" collection="COLLECTION_PLAYER_UNITS" effect="EFFECT_UNIT_ADJUST_EMBARKATION_TYPE" permanent="true">` … `<Argument name="EmbarkationType">UNIT_EMBARKATION_SHALLOW_WATER</Argument>`
+- **[VERIFIED]** The **deep** tier (the one that opens `TERRAIN_OCEAN`) is granted in the Modern age —
+  `age-modern/data/civilizations-common-gameeffects.xml:141`:
+  `<Modifier id="MOD_MODERN_EMBARKATION" collection="COLLECTION_PLAYER_UNITS" effect="EFFECT_UNIT_ADJUST_EMBARKATION_TYPE" permanent="true">` with
+  `<SubjectRequirements><Requirement type="REQUIREMENT_UNIT_DOMAIN_MATCHES"><Argument name="UnitDomain">DOMAIN_LAND</Argument></Requirement></SubjectRequirements>` and
+  `<Argument name="EmbarkationType">UNIT_EMBARKATION_DEEP_WATER</Argument>`
+- **[VERIFIED]** A companion effect marks a terrain valid per unit-class —
+  `age-modern/.../civilizations-common-gameeffects.xml:133` `MOD_MODERN_OCEAN_TRAVEL`,
+  `effect="EFFECT_ADJUST_UNIT_VALID_TERRAIN"`, `<Argument name="TerrainType">TERRAIN_OCEAN</Argument><Argument name="Valid">true</Argument>`.
+- **[VERIFIED]** The full moddable effect vocabulary here is exactly three:
+  `EFFECT_UNIT_ADJUST_EMBARKATION_TYPE`, `EFFECT_ADJUST_UNIT_VALID_TERRAIN`, `EFFECT_ADJUST_UNIT_EMBARKED_MOVEMENT`.
+
+**Consequence — Wall 4 restated.** There is no modifier that says "ignore distant lands" (Wall 4 stands as
+written), **but** there IS a fully modifier-reachable capability that produces the same end result by the
+game's own intended route: grant `UNIT_EMBARKATION_DEEP_WATER` to `DOMAIN_LAND` units in Antiquity and the
+ocean becomes traversable, making the far continent reachable. This is a **movement** unlock, NOT a
+`CREATE_ELEMENT` placement unlock — the two are separate checks, and whether embarkation also relaxes the
+placement gate is **UNTESTED** (new highest-value live probe).
+
+**Caveat [VERIFIED — engine rule]:** modifiers are serialized into saves, so a newly-added modifier only
+takes effect in a **NEW game**; it will not retrofit the user's current save.
+
+**New live probes (prepend to the Phase-2 queue):**
+- **P0a** — after granting deep-water embarkation, does `CREATE_ELEMENT` seat a unit on a distant-lands tile?
+- **P0b** — is embarkation settable at RUNTIME (without a new game)? Probe for a unit/player embarkation
+  setter or a runtime modifier-attach API; if one exists, the whole feature becomes save-compatible.
