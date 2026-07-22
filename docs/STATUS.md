@@ -2,7 +2,30 @@
 
 _Last updated: 2026-07-13. Read this first to resume work._
 
-## ▶ Current round (2026-07-13) — teleport REAL root cause = DISTANT LANDS (not fog); fix + Reveal Map committed; pending Reload-UI verify
+## ▶ Current round (2026-07-22) — Steam-comment batch #1: Cities list + Restore-movement fixed; "missions" = engine wall
+
+Three Steam-workshop comments, root-caused against the live 1.4.1 base source (3-agent workflow) + a
+read-only live-tuner probe (game was running, port 4318). All JS/CSS-only → **Reload UI** (symlink deploy
+is live). Constraint honored: purely additive, existing working paths untouched.
+
+| Report | Root cause (verified) | Fix | State | Commit |
+|---|---|---|---|---|
+| **"6 cities, only first 4 shown"** | Pure CSS clip, NOT a data cap — `getCities()` returns all 6 (towns incl.). `.cheat-city-list`/`.cheat-unit-list` had `max-height:15rem; overflow-y:auto`, but a nested overflow div does NOT scroll in Gameface (only `<fxs-scrollable>` does) → ~4 tall rows fit, rest an unreachable dead window. Outer `fxs-scrollable` (`.subsystem-frame__content`) works. | Dropped the `max-height`+`overflow` cap (cheat-panel.js) → list flows at natural height, outer scroller handles overflow. Also un-clips long unit lists. | 🟡 implemented, NOT verified | `5664382` |
+| **"restore movement doesn't work"** | `Units.restoreMovement` DOES restore MP from the isolate (verified infinite-move uses it). Defect = stale flag: it emits `UnitMovementPointsRestored` (no UI listens); flag un-greys only on `UnitMovementPointsChanged` (unit-flag-manager.js:164/277→unit-flags.js:491). A real move fires that; the manual [Move] fired nothing → unit stayed greyed + auto-skipped → "didn't work" even though it can move. | New `refreshUnitFlag()` re-emits `UnitMovementPointsChanged` after every manual restore (per-row/selected/all). 3 listeners all read-only → safe. Best-effort (cross-isolate delivery UNVERIFIED). | 🟡 implemented, NOT verified | `606dfad` |
+| **"include Foundation & Leaders missions"** | These are account-level 2K **DNA online meta-progression** (LEGEND_PATH_FOUNDATION / CHALLENGE_CLASS_LEADER), server-authoritative, `Online.Metaprogression/Achievements/UserProfile` expose **only getters** (no grant/complete), and it lives in the SHELL, not the match sandbox the panel reaches. | **ENGINE WALL** — not implementable as a cheat. Adjacent reachable alt: grant in-match Legacy Path points via `Players.get(id).AdvancedStart`/`.LegacyPaths` (different feature). | ⛔ won't-do (wall) | — |
+
+### Test plan (Reload UI — one pass)
+1. **Cities:** open Cities with ≥6 settlements → scroll the tab (wheel or drag) → **all** cities reachable
+   (previously stopped at ~4). Same for a long **Units** list.
+2. **Restore movement:** move a unit until greyed → Units tab → its row **[Move]** (or **Restore Move**
+   selected / bulk). Report: (a) does the panel row show full MP again? (b) does the **map flag un-grey**?
+   (c) can you **move the unit again**? (a)=write, (b)=cross-isolate flag trigger, (c)=functional truth.
+3. If (a)=yes but (b)=no, the restore works and only the flag trigger didn't cross isolates → next round
+   finds another refresh path or discloses honestly.
+
+---
+
+## ▶ (prior) Current round (2026-07-13) — teleport REAL root cause = DISTANT LANDS (not fog); fix + Reveal Map committed; pending Reload-UI verify
 
 Live tuner debugging (game running, ctx 65535) overturned the 2026-07-11 "fog" RCA. Controlled create
 trials on a fully-revealed map isolated the true gate: **`CREATE_ELEMENT` cannot place a unit on a
