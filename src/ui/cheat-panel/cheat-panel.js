@@ -166,7 +166,15 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-left:hover::before { border-right-color: #e6c66e; }
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #e6c66e; }
             .cheat-frame fxs-header { cursor: grab; width: 100% !important; color: #e8dcc0 !important; }
-            .cheat-frame .cheat-unit-list, .cheat-frame .cheat-city-list { max-height: 15rem; overflow-y: auto; margin-top: 0.25rem; }
+            /* NOTE: do NOT re-add `max-height` + `overflow-y:auto` here. A nested overflow div does not
+               scroll in this Coherent Gameface build (only <fxs-scrollable> reimplements wheel/drag —
+               base fxs-scrollable.js), so a capped inner box silently CLIPS long lists: with 6 cities
+               only the first ~4 tall rows fit 15rem and the rest were unreachable (Steam-comment bug).
+               Letting the list flow at natural height hands overflow to the frame's OWN working outer
+               fxs-scrollable (.subsystem-frame__content), which scrolls the whole tab inside the fixed
+               42rem frame — the same single-scroller pattern the base game uses. Same rule covers the
+               units list, so long unit lists become fully reachable too. */
+            .cheat-frame .cheat-unit-list, .cheat-frame .cheat-city-list { margin-top: 0.25rem; }
             .cheat-frame .lcp-list-empty { color: #a89878; text-align: center; padding: 0.5rem; font-size: 0.88rem; }
             .cheat-frame .lcp-row {
                 display: flex; flex-direction: column;
