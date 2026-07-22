@@ -98,9 +98,33 @@ export function addAttributePoints(count) {
 }
 
 // ─── UNIT primitives (by component id) ────────────────────────────────
-export function restoreMovement(unitId) { if (!guardSP()) return; Units.restoreMovement(unitId); }
+export function restoreMovement(unitId) { if (!guardSP()) return; Units.restoreMovement(unitId); refreshUnitFlag(unitId); LOG('restoreMovement', unitId?.id); }
 export function healUnit(unitId)        { if (!guardSP()) return; Units.setDamage(unitId, 0); }
 export function giveExperience(unitId, amount) { if (!guardSP()) return; Units.changeExperience(unitId, amount); }
+
+/**
+ * Best-effort refresh of a unit's on-map flag after a movement-point restore.
+ *
+ * WHY (Steam-comment "restore movement doesn't work"): the moves DO come back — the global infinite-move
+ * toggle (verified in-game) restores via this exact `Units.restoreMovement` from this same isolate. The
+ * problem is purely a stale on-map flag: `restoreMovement` emits the engine event
+ * `UnitMovementPointsRestored`, which NOTHING in the shipped UI listens to; the flag only drops its greyed
+ * `no_movement` state from `updateMovement()`, called solely by the flag manager's
+ * `UnitMovementPointsChanged` handler (base unit-flag-manager.js:164/277 → unit-flags.js:491, which just
+ * re-reads movementMovesRemaining and un-greys when it's non-zero). The manual [Move] button, unlike an
+ * actual move, produces no such event — so the unit stays greyed and auto-cycle skips it, reading as
+ * "didn't work" even though it CAN move. Re-emitting `UnitMovementPointsChanged` runs that refresh. All
+ * three of its listeners are read-only (flag un-grey, action-panel re-eval, tutorial nudge — verified),
+ * so firing it is side-effect-safe. Best-effort: if a UI-side trigger doesn't reach the flag manager's
+ * context, this is a harmless no-op and the caller's in-panel row repaint still confirms the restore.
+ */
+export function refreshUnitFlag(unitId) {
+    try {
+        if (typeof engine !== 'undefined' && engine.trigger) {
+            engine.trigger('UnitMovementPointsChanged', { unit: unitId });
+        }
+    } catch (e) { /* best-effort only — never let a refresh failure surface as a restore failure */ }
+}
 
 // ─── UNIT display helpers (reads only; safe in any mode) ──────────────
 /** Snapshot of a unit's display fields, fully defensive against missing components. */
@@ -389,7 +413,7 @@ export function restoreMovementSelected() {
 export function healSelectedUnit()       { const u = getSelectedUnit(); if (!u) { ERR('no unit selected'); return; } healUnit(u.id); }
 export function giveExperienceSelected(amount) { const u = getSelectedUnit(); if (!u) { ERR('no unit selected'); return; } giveExperience(u.id, amount); }
 
-export function restoreMovementAll() { if (!guardSP()) return; for (const u of getLocalUnits()) Units.restoreMovement(u.id); LOG('restored movement: all units'); }
+export function restoreMovementAll() { if (!guardSP()) return; for (const u of getLocalUnits()) { Units.restoreMovement(u.id); refreshUnitFlag(u.id); } LOG('restored movement: all units'); }
 export function healAllUnits()       { if (!guardSP()) return; for (const u of getLocalUnits()) Units.setDamage(u.id, 0); LOG('healed: all units'); }
 
 // ─── CITY ─────────────────────────────────────────────────────────────
