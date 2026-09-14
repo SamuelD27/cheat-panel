@@ -21,14 +21,24 @@
 		</Criteria>
 	</ActionCriteria>
 	<ActionGroups>
-		<ActionGroup id="shell-local-cheat-panel" scope="shell" criteria="always">
+		<!-- Group ids are lcp-dev-* (NOT the twin's shell-/game-local-cheat-panel) so any "Errors when applying
+		     action X" line in Modding.log names which copy failed. LoadOrder 50: after the twin's LoadOrder-0 plain
+		     inserts, so our InsertOrIgnore rows are the no-op copy (see database/*.xml); strictly between the other
+		     mods' 36 and 100 to avoid tie-break ambiguity. -->
+		<ActionGroup id="lcp-dev-shell" scope="shell" criteria="always">
+			<Properties>
+				<LoadOrder>50</LoadOrder>
+			</Properties>
 			<Actions>
 				<UpdateDatabase>
 					<Item>database/input.xml</Item>
 				</UpdateDatabase>
 			</Actions>
 		</ActionGroup>
-		<ActionGroup id="game-local-cheat-panel" scope="game" criteria="always">
+		<ActionGroup id="lcp-dev-game" scope="game" criteria="always">
+			<Properties>
+				<LoadOrder>50</LoadOrder>
+			</Properties>
 			<Actions>
 				<!-- DO NOT register database/input.xml here (game scope). input.xml defines rows in
 				     InputActions / InputActionDefaultGestures, which exist only in the FRONT-END

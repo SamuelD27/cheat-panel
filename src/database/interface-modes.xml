@@ -11,10 +11,14 @@
   InterfaceModes is a gameplay-scope table (loaded from base-standard/data/interface-modes.xml),
   so registering this file in the game-scope ActionGroup is safe — unlike input.xml, which is
   shell-only and broke save loading when added in game scope (see M4.1-fix).
+
+  InsertOrIgnore (+ LoadOrder 50 in the modinfo): the Workshop twin sam-cheat-panel ships these exact rows; a
+  plain second insert would fail the InterfaceModeType PRIMARY KEY and roll back the gameplay database (every
+  mod's game content). OR IGNORE also hides NOT NULL errors — tripwire: "Interface Mode ... not defined in Database".
 -->
 <Database>
 	<InterfaceModes>
-		<Row InterfaceModeType="INTERFACEMODE_LCP_CLAIM_TILE" ViewName="Placement"/>
-		<Row InterfaceModeType="INTERFACEMODE_LCP_PAINT_TILE" ViewName="Placement"/>
+		<InsertOrIgnore InterfaceModeType="INTERFACEMODE_LCP_CLAIM_TILE" ViewName="Placement"/>
+		<InsertOrIgnore InterfaceModeType="INTERFACEMODE_LCP_PAINT_TILE" ViewName="Placement"/>
 	</InterfaceModes>
 </Database>
