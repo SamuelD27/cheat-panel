@@ -2,7 +2,25 @@
 
 _Last updated: 2026-07-13. Read this first to resume work._
 
-## ▶ Current round (2026-07-22) — Steam-comment batch #1: Cities list + Restore-movement fixed; "missions" = engine wall
+## ▶ Current round (2026-09-14): game updated to build 24661151; panel wouldn't open; twin collision broke other mods
+
+| Report | Root cause (verified) | Fix | State | Commit |
+|---|---|---|---|---|
+| **Panel can't open after the update** | NOT the update. `5664382` put backticks inside the injectPanelStyles CSS template literal, giving a module-wide SyntaxError at cheat-panel.js:169. `panel-lcp` was never defined, so the dock push threw at context-manager.js:113 and wedged the screen stack. A 6-auditor + 12-verifier drift audit found **no API drift** in 24661151. | Quotes instead of backticks, plus a warning comment. Every push is guarded with `Controls.isDefined('panel-lcp')`. | ✅ verified (panel opened after Reload UI) | `48a9c33` |
+| **Skull button vanished after Reload UI** | `customElements.get('panel-sub-system-dock')` returns Controls' generic wrapper (no onInitialize, verified live). It is truthy, so it shadowed the `Controls.getDefinition` fallback. | Resolve via `Controls.getDefinition().createInstance` and accept only a class with onInitialize. Also decorate the already-initialized live dock, guarded against double-add. | ✅ verified (1 skull, 10 dock buttons) | `48a9c33` |
+| **supercolors etc. "sometimes" missing in new games** | Whenever a configuration pass had BOTH local-cheat-panel and sam-cheat-panel in Target Mods: `UNIQUE constraint failed: InputActions.ActionId`, then a rollback of the whole shell/config DB, which removes supercolors' setup-parameters and jersey picker (9/9 correlation in Modding.log). | **Layer A**: `InsertOrIgnore` rows, gestures `Delete`+`Row`, LoadOrder 50, group ids `lcp-dev-*`. **Layer B**: criteria `<ModInUse inverse="1">sam-cheat-panel</ModInUse>`, so the dev copy is inert when the twin is in the pass. | 🟡 committed, needs a RESTART test (Layer B's `inverse` is runtime-unverified) | `8f68451`, `7ec72fd` |
+
+### Restart test (modinfo changed, so Reload UI is not enough)
+Key every check on whether `sam-cheat-panel` appears in that pass's Modding.log `Target Mods` list. The Mods.sqlite `Disabled` flag does NOT drive Target Mods.
+1. **No-twin (normal dev state):** UI.log shows `LCP: F8 wiring — input-action row PRESENT`, the in-game `Target in-game actions` list includes `local-cheat-panel * lcp-dev-game`, and the skull, F8 and Map claim/paint all work. `sqlite3 -readonly Mods.sqlite` Criterion row for `lcp-twin-absent` has `Inverse=1`. **If the panel is gone while sam is absent from Target Mods, revert `7ec72fd` only.**
+2. **Twin present (optional):** enable sam as well and restart. Expect no `UNIQUE constraint failed` in Database.log, no `Rollback Required`, and supercolors' setup picker present. Don't start a game until step 3 is confirmed.
+3. In a game with sam in Target Mods, `lcp-dev-game` is absent (local inert) and only one panel exists.
+
+Still open (found by the drift audit, pre-existing): Esc doesn't close the panel (only `sys-menu`); the minimap river enum is off by one (`RiverTypes` NO_RIVER=-1, MINOR=0, NAVIGABLE=1), which probably explains the open river bug; resource dot colours use Civ VI class names (CITY/EMPIRE show white); `sam-cheat-panel` needs the collision-proof `database/*.xml` in its next Workshop update (private dry run first).
+
+---
+
+## ▶ (prior) Current round (2026-07-22) — Steam-comment batch #1: Cities list + Restore-movement fixed; "missions" = engine wall
 
 Three Steam-workshop comments, root-caused against the live 1.4.1 base source (3-agent workflow) + a
 read-only live-tuner probe (game was running, port 4318). All JS/CSS-only → **Reload UI** (symlink deploy
