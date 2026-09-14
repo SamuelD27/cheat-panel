@@ -166,7 +166,9 @@ class ScreenCheatPanel extends Panel {
             .cheat-frame .fxs-stepper-left:hover::before { border-right-color: #e6c66e; }
             .cheat-frame .fxs-stepper-right:hover::before { border-left-color: #e6c66e; }
             .cheat-frame fxs-header { cursor: grab; width: 100% !important; color: #e8dcc0 !important; }
-            /* NOTE: do NOT re-add `max-height` + `overflow-y:auto` here. A nested overflow div does not
+            /* (NEVER put a backtick anywhere in this CSS — the whole block is a JS template literal, and
+               one stray backtick is a module-wide SyntaxError that stops the panel from opening.)
+               NOTE: do NOT re-add 'max-height' + 'overflow-y:auto' here. A nested overflow div does not
                scroll in this Coherent Gameface build (only <fxs-scrollable> reimplements wheel/drag —
                base fxs-scrollable.js), so a capped inner box silently CLIPS long lists: with 6 cities
                only the first ~4 tall rows fit 15rem and the rest were unreachable (Steam-comment bug).

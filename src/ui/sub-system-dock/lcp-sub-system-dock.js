@@ -13,20 +13,26 @@
 import ContextManager from '/core/ui/context-manager/context-manager.js';
 
 function resolvePanelSubSystemDockClass() {
-    // Native custom-element registry first — Controls.define ultimately calls
-    // customElements.define(name, c) so this is the most direct lookup.
-    try {
-        if (typeof customElements !== 'undefined') {
-            const c = customElements.get('panel-sub-system-dock');
-            if (c) return c;
-        }
-    } catch (_) { /* ignore */ }
+    // Only accept a candidate that is the real component class (has onInitialize). Verified live on
+    // build 24661151 after an in-game Reload UI: customElements.get('panel-sub-system-dock') returns
+    // Controls' generic element wrapper (prototype = constructor only). It is truthy, so the old
+    // "customElements first" order returned it, never reached the Controls fallback, and the skull
+    // button silently vanished. Controls.getDefinition(...).createInstance IS PanelSubSystemDock.
+    const isComponentClass = (c) => !!(c && c.prototype && typeof c.prototype.onInitialize === 'function');
 
-    // Fallback: Civ 7 Controls registry.
+    // Civ 7 Controls registry first — createInstance is the component class itself.
     try {
         if (typeof Controls !== 'undefined' && typeof Controls.getDefinition === 'function') {
             const def = Controls.getDefinition('panel-sub-system-dock');
-            if (def && def.createInstance) return def.createInstance;
+            if (def && isComponentClass(def.createInstance)) return def.createInstance;
+        }
+    } catch (_) { /* ignore */ }
+
+    // Fallback: native custom-element registry (older builds returned the component class here).
+    try {
+        if (typeof customElements !== 'undefined') {
+            const c = customElements.get('panel-sub-system-dock');
+            if (isComponentClass(c)) return c;
         }
     } catch (_) { /* ignore */ }
 
@@ -79,6 +85,22 @@ document.head.appendChild(cheatPanelCSS);
 // while Input.getActionIdByName('lcp-open-panel') reports the action row MISSING (case 1), so the
 // two paths cannot both act. togglePanel()'s 300ms debounce backstops any residual overlap.
 
+/**
+ * True if the panel-lcp component registered. If cheat-panel.js failed to load (e.g. a SyntaxError),
+ * ContextManager.push('panel-lcp') would create a component-less element that throws inside
+ * context-manager.js pushElement and WEDGES the whole screen stack (every later push/pop throws until
+ * Reload UI) — verified in UI.log on build 24661151. Refuse to push instead, and say why.
+ */
+function panelDefined() {
+    try {
+        if (typeof Controls !== 'undefined' && typeof Controls.isDefined === 'function' && !Controls.isDefined('panel-lcp')) {
+            console.error("LCP: panel-lcp is not defined — cheat-panel.js failed to load (check UI.log for a JS Error in local-cheat-panel). Not opening.");
+            return false;
+        }
+    } catch (_) { /* can't tell → let the push proceed */ }
+    return true;
+}
+
 let _lastToggleTs = 0;
 function togglePanel(source) {
     const now = Date.now();
@@ -91,7 +113,7 @@ function togglePanel(source) {
         const isOpen = ContextManager.isCurrentClass('panel-lcp');
         console.log('LCP: hotkey toggle (source=' + source + ') -> ' + (isOpen ? 'close' : 'open'));
         if (isOpen) ContextManager.pop('panel-lcp');
-        else ContextManager.push('panel-lcp', { singleton: true });
+        else if (panelDefined()) ContextManager.push('panel-lcp', { singleton: true });
     } catch (e) {
         console.error('LCP: hotkey toggle failed:', e);
     }
@@ -141,39 +163,64 @@ setTimeout(() => {
 console.log("LCP: dock bootstrap");
 
 function openCheatPanelViewer() {
+    if (!panelDefined()) return;
     ContextManager.push("panel-lcp", { singleton: true });
+}
+
+/** Adds the skull button to one dock component instance, unless it already has one. */
+function addSkullButton(dock, source) {
+    if (!dock || typeof dock.addButton !== 'function' || !dock.buttonContainer) return false;
+    if (dock.buttonContainer.querySelector('.lcp-skull')) return true;   // never double-add
+    dock.addButton({
+        tooltip: "LOC_LCP_CHEAT_PANEL_OPEN_PANEL",
+        modifierClass: 'lcp-skull',
+        callback: openCheatPanelViewer,
+        class: "tut-lcp",
+        audio: "religion",
+        focusedAudio: "data-audio-focus-small"
+    });
+    console.warn("LCP: skull button added to sub-system dock (source=" + source + ")");
+    return true;
 }
 
 function buildOnInitialize(prev_onInitialize) {
     return function onInitialize(...args) {
         prev_onInitialize.apply(this, args);
-        this.addButton({
-            tooltip: "LOC_LCP_CHEAT_PANEL_OPEN_PANEL",
-            modifierClass: 'lcp-skull',
-            callback: this.openCheatPanelViewer.bind(this),
-            class: "tut-lcp",
-            audio: "religion",
-            focusedAudio: "data-audio-focus-small"
-        });
-        console.log("LCP: skull button added to sub-system dock");
+        addSkullButton(this, 'onInitialize');
     };
+}
+
+/**
+ * Reload-UI path: the dock may ALREADY be initialized before this script runs, so the prototype
+ * patch alone never fires for it. Add the button straight onto any live, initialized dock instance.
+ * Returns the number of live docks that now carry the skull.
+ */
+function decorateLiveDocks() {
+    let done = 0;
+    try {
+        document.querySelectorAll('panel-sub-system-dock').forEach((el) => {
+            const dock = el.component;
+            // Initialized = onInitialize already appended buttonContainer into Root. A constructed-but-
+            // not-yet-initialized dock is left to the patched onInitialize (keeps the stock button order).
+            if (!dock || !dock.Root || !dock.buttonContainer || !dock.Root.contains(dock.buttonContainer)) return;
+            if (addSkullButton(dock, 'live-instance')) done++;
+        });
+    } catch (e) {
+        console.error("LCP: live dock decoration failed:", e);
+    }
+    return done;
 }
 
 function patchDock() {
     const cls = resolvePanelSubSystemDockClass();
-    if (!cls || !cls.prototype) return false;
-    if (cls.prototype.__lcpDockPatched) return true;
-
-    const prev_onInitialize = cls.prototype.onInitialize;
-    if (typeof prev_onInitialize !== 'function') {
-        console.warn("LCP: PanelSubSystemDock has no onInitialize — skipping patch attempt this cycle");
-        return false;
+    if (!cls) return false;
+    if (!cls.prototype.__lcpDockPatched) {
+        cls.prototype.onInitialize = buildOnInitialize(cls.prototype.onInitialize);
+        cls.prototype.openCheatPanelViewer = openCheatPanelViewer;
+        cls.prototype.__lcpDockPatched = true;
+        console.warn("LCP: sub-system dock patched (Controls.getDefinition path)");
     }
-    cls.prototype.onInitialize = buildOnInitialize(prev_onInitialize);
-    cls.prototype.openCheatPanelViewer = openCheatPanelViewer;
-    cls.prototype.__lcpDockPatched = true;
-
-    console.log("LCP: sub-system dock patched (1.4.0-safe path)");
+    decorateLiveDocks();
     return true;
 }
 
