@@ -19,13 +19,24 @@
 		<Criteria id="always">
 			<AlwaysMet></AlwaysMet>
 		</Criteria>
+		<!-- Twin guard: TRUE only while the public Workshop twin sam-cheat-panel is NOT in this configuration
+		     pass's mods, so with both enabled this dev copy contributes no action groups at all (no DB rows, no
+		     text, no UIScripts → no double panel-lcp define). ModInUse = the pass's Target Mods, which is the
+		     actual collision condition (Mods.sqlite Disabled does NOT drive Target Mods). inverse="1" negates the
+		     criterion (loader writes Criterion.Inverse; evaluator XORs it — verified by disassembly of build
+		     24661151; no shipped mod uses it yet). Layer A (InsertOrIgnore + LoadOrder) still protects the DB if
+		     this gate ever misfires permissively.
+		     DEV MODINFO ONLY — NEVER copy into sam-cheat-panel.modinfo (there it would disable itself). -->
+		<Criteria id="lcp-twin-absent">
+			<ModInUse inverse="1">sam-cheat-panel</ModInUse>
+		</Criteria>
 	</ActionCriteria>
 	<ActionGroups>
 		<!-- Group ids are lcp-dev-* (NOT the twin's shell-/game-local-cheat-panel) so any "Errors when applying
 		     action X" line in Modding.log names which copy failed. LoadOrder 50: after the twin's LoadOrder-0 plain
 		     inserts, so our InsertOrIgnore rows are the no-op copy (see database/*.xml); strictly between the other
 		     mods' 36 and 100 to avoid tie-break ambiguity. -->
-		<ActionGroup id="lcp-dev-shell" scope="shell" criteria="always">
+		<ActionGroup id="lcp-dev-shell" scope="shell" criteria="lcp-twin-absent">
 			<Properties>
 				<LoadOrder>50</LoadOrder>
 			</Properties>
@@ -35,7 +46,7 @@
 				</UpdateDatabase>
 			</Actions>
 		</ActionGroup>
-		<ActionGroup id="lcp-dev-game" scope="game" criteria="always">
+		<ActionGroup id="lcp-dev-game" scope="game" criteria="lcp-twin-absent">
 			<Properties>
 				<LoadOrder>50</LoadOrder>
 			</Properties>

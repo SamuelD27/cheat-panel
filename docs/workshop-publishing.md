@@ -52,6 +52,13 @@ Everything else is shared between the two copies.
 - [ ] `<Mod version>` bumped
 - [ ] Only the intended files changed; territory cheat absent (`grep setOwnership` → nothing)
 - [ ] modinfo: `id="sam-cheat-panel"`, `AffectsSavedGames=0`, every `<Item>`/`<File>` resolves
+- [ ] modinfo: **no `lcp-twin-absent` criteria / no `inverse="1"` on `sam-cheat-panel`**. That guard is
+      dev-only: inside the twin it tests for itself and silently disables the public mod for every
+      subscriber. Do not copy the dev `<LoadOrder>50` either unless the twin's `database/*.xml` already use
+      the `InsertOrIgnore`/`Delete+Row` form. With plain `<Row>` at a higher LoadOrder, the twin's insert
+      becomes the one that fails and rolls back every mod's shell DB, the 2026-09-14 supercolors bug.
+- [ ] `database/*.xml` are the collision-proof versions (`InsertOrIgnore`, gestures `Delete`+`Row`), so the
+      public copy can never roll back other mods' DB either
 - [ ] No `docs/`/`scripts/`/`.git`/secrets/dev-path leaked into the folder
 - [ ] `README.md` patch line current (`23245653 / Update 1.4.0 "Test of Time"`)
 
