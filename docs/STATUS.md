@@ -1,8 +1,25 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-07-13. Read this first to resume work._
+_Last updated: 2026-10-14. Read this first to resume work._
 
-## ▶ Current round (2026-09-14): game updated to build 24661151; panel wouldn't open; twin collision broke other mods
+## ▶ Current round (2026-10-14): game updated to build 25516395; Creative paint (and City claim) clicks do nothing
+
+| Report | Root cause (verified in base source + UI.log) | Fix | State |
+|---|---|---|---|
+| **Creative doesn't work** | Build 25516395 changed the engine-input handler contract from a boolean (`true` = pass-through) to `InputHandlerState` (`Active=0` pass-through, `Handled=1` consumed). `ContextManager` tests `result == InputHandlerState.Handled` (context-manager.js:602) with `.some()` across handlers. `InterfaceMode` is registered before `CameraController`/`PlotCursor`/`WorldInput` (root-game.js:162-168), so `LcpPlotMode.handleInput` returning `true` (`true == 1`) consumed every click and WorldInput never picked a plot. UI.log: `enterPaint … switchTo=true, cur=INTERFACEMODE_LCP_PAINT_TILE` but zero `commit:` breadcrumbs. The same base class drives City **Claim**, so that was dead too. | `lcp-plot-mode-base.js` returns `InputHandlerState.Active`/`.Handled` (mirrors the new interface-mode-acquire-tile.js:368). `InputHandlerState` is exported from `shared/imports.js`. | 🟡 committed, needs a **Reload UI** test |
+
+Static checks on 25516395: the WorldBuilder `MapPlots.set{Terrain,Biome,Feature,Resource,Ownership}` bindings are still in the binary, and the Feature_NaturalWonders/ValidTerrains/ValidBiomes, Terrains, Biomes, Features and Resources tables still exist. These are not live-probed (the game was closed).
+**Workshop twin `sam-cheat-panel` has the same bug.** It needs this one-file fix (`lcp-plot-mode-base.js` + `imports.js` byte-copy) in its next update, after a private dry run.
+
+### Test (Reload UI)
+1. Creative → Terrain → any terrain → Paint → click a land tile. Expect a yellow hover highlight, a **green/red flash** on click, and a `LCPD…commit:` line in UI.log.
+2. Creative → Resource → any resource → Paint → click tiles. Paint several tiles in a row; the mode stays active.
+3. Press **Esc** (or right-click, or the banner's Exit button). You should leave paint mode **without** the pause menu opening.
+4. Cities → a city → **Claim** → click a tile → it joins the city.
+
+---
+
+## ▶ (prior) Current round (2026-09-14): game updated to build 24661151; panel wouldn't open; twin collision broke other mods
 
 | Report | Root cause (verified) | Fix | State | Commit |
 |---|---|---|---|---|

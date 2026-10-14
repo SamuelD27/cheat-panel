@@ -17,5 +17,8 @@ import { DialogBoxManager } from '/core/ui/dialog-box/manager-dialog-box.js';
 import { DialogBoxAction } from '/core/ui/dialog-box/model-dialog-box.js';
 import ContextManager from '/core/ui/context-manager/context-manager.js';
 import { InterfaceMode } from '/core/ui/interface-modes/interface-modes.js';
+// Build 25516395+: engine-input handlers return this enum (Active=0 pass-through, Handled=1 consumed),
+// NOT the old boolean (true = pass-through). ContextManager compares `== InputHandlerState.Handled`.
+import { InputHandlerState } from '/core/ui/input/input-support.js';
 
-export { Panel, FocusManager, DialogBoxManager, DialogBoxAction, ContextManager, InterfaceMode };
+export { Panel, FocusManager, DialogBoxManager, DialogBoxAction, ContextManager, InterfaceMode, InputHandlerState };

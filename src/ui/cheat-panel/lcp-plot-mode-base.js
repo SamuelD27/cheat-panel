@@ -10,10 +10,15 @@
  *      (pass-through), so the Esc reaches the global window 'engine-input' listener in root-game.js,
  *      which opens the PAUSE/SETTINGS menu instead of exiting our mode — the reported bug. We override
  *      handleInput to UNCONDITIONALLY swallow cancel inputs and switch to default, copying the proven
- *      INTERFACEMODE_ACQUIRE_TILE / PLACE_BUILDING pattern (interface-mode-acquire-tile.js:367):
- *      stopPropagation()+preventDefault()+return false. Returning false marks the event consumed, so
- *      ContextManager.handleInput returns false → action-handler skips window.dispatchEvent → the pause
- *      menu never fires.  (Return contract: false = consumed/handled; true = pass-through.)
+ *      INTERFACEMODE_ACQUIRE_TILE / PLACE_BUILDING pattern (interface-mode-acquire-tile.js:368):
+ *      stopPropagation()+preventDefault()+return InputHandlerState.Handled. Handled marks the event
+ *      consumed, so ContextManager.handleInput returns false → action-handler skips window.dispatchEvent
+ *      → the pause menu never fires.
+ *      Return contract (build 25516395+): InputHandlerState.Active (0) = pass-through, .Handled (1) =
+ *      consumed; ContextManager tests `result == InputHandlerState.Handled`. The OLD contract was a
+ *      boolean with true = pass-through — returning `true` now reads as Handled (true == 1), which
+ *      swallowed every map click before WorldInput (registered after InterfaceMode in root-game.js)
+ *      could select a plot: Creative paint and City claim went dead after the update.
  *
  *   2. A shared on-screen EXIT BANNER with a clickable "✕ Exit" button, so every mode has the SAME
  *      discoverable exit (mouse click + Esc + right-click). Interface modes run in the main HUD
@@ -30,7 +35,7 @@
  * Registered as an <ImportFiles> item in local-cheat-panel.modinfo.
  */
 import ChoosePlotInterfaceMode from '/base-standard/ui/interface-modes/interface-mode-choose-plot.js';
-import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
+import { InterfaceMode, InputHandlerState } from '/base-standard/ui/cheat-panel/shared/imports.js';
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
 const BANNER_ID = 'lcp-plot-mode-banner';
@@ -41,23 +46,25 @@ export default class LcpPlotMode extends ChoosePlotInterfaceMode {
      * menu never opens. Mirrors interface-mode-acquire-tile.js:367-376. Deliberately does NOT replicate
      * the base's `!ViewManager.isWorldInputAllowed -> return true` guard (that pass-through is exactly
      * what leaked Esc to the pause menu). Everything non-cancel passes through (camera, plot picking).
+     * Returns InputHandlerState values — never booleans (see the file header for why `true` broke clicks).
      */
     handleInput(inputEvent) {
         try {
             const detail = inputEvent && inputEvent.detail;
-            if (!detail) return true;
+            if (!detail) return InputHandlerState.Active;
             // Act only on key/button RELEASE (FINISH), like the base + base placement modes — so there is
             // no separate key-up event left to leak to the pause menu after we switch away.
-            if (typeof InputActionStatuses !== 'undefined' && detail.status !== InputActionStatuses.FINISH) return true;
+            if (typeof InputActionStatuses !== 'undefined' && detail.status !== InputActionStatuses.FINISH) return InputHandlerState.Active;
             const isCancel = (typeof inputEvent.isCancelInput === 'function' && inputEvent.isCancelInput())
                 || detail.name === 'sys-menu' || detail.name === 'keyboard-escape';
             if (isCancel) {
+                api.LOG('LcpPlotMode.handleInput: cancel input (' + detail.name + ') -> exit to default mode');
                 InterfaceMode.switchToDefault();
                 try { inputEvent.stopPropagation(); inputEvent.preventDefault(); } catch (_) {}
-                return false;   // false == consumed → pause menu suppressed
+                return InputHandlerState.Handled;   // consumed → pause menu suppressed
             }
         } catch (e) { api.ERR('LcpPlotMode.handleInput failed:', e); }
-        return true;            // pass-through for all non-cancel input
+        return InputHandlerState.Active;            // pass-through: camera, plot cursor, WorldInput plot pick
     }
 
     /**
