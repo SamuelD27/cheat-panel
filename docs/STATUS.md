@@ -17,6 +17,14 @@ Static checks on 25516395: the WorldBuilder `MapPlots.set{Terrain,Biome,Feature,
 3. Press **Esc** (or right-click, or the banner's Exit button). You should leave paint mode **without** the pause menu opening.
 4. Cities → a city → **Claim** → click a tile → it joins the city.
 
+### sam-cheat-panel Workshop twin (prepared, awaiting local test pass)
+**2026-10-18:** The public Workshop copy has been prepared at `~/Library/Application Support/Civilization VII/Mods/sam-cheat-panel/` with:
+- ✅ InputHandlerState fix copied (`lcp-plot-mode-base.js`, `imports.js`)
+- ✅ Territory cheat removed (`api.js` uses only `city.purchasePlot`, not `WorldBuilder.MapPlots.setOwnership`)
+- ✅ Dev-only modinfo cleaned (removed `lcp-twin-absent` criteria, `lcp-dev-*` group ids, LoadOrder 50 → 0, version bumped to 2)
+- ✅ Database files collision-proof (InsertOrIgnore + Delete+Row already present in src/)
+- ⏳ **Awaiting:** local-cheat-panel Reload UI test to pass. Once Creative paint/claim verify working, sam-cheat-panel is ready for smoke-test (enable only sam, restart, verify Modding.log clean) and Workshop upload.
+
 ---
 
 ## ▶ (prior) Current round (2026-09-14): game updated to build 24661151; panel wouldn't open; twin collision broke other mods
