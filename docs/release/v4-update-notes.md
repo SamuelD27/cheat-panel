@@ -41,6 +41,9 @@ Update for Civ VII 1.5.0: Creative painting, City Claim and unit Delete work aga
 
 ## Workshop description (optional)
 
-The item page description is edited on the Workshop page (Edit title & description), not by this release.
-If you want it current, replace its feature list with the one in `dist-workshop/README.md` and change the
-"Tested on" line to: `Tested on Civ VII 1.5.0 (Steam build 25516395)`.
+The uploader's Additional Details page says the title and description are changed on the Workshop page after the
+upload. If the update nevertheless replaces the long description with the modinfo one-liner, paste back the copy
+saved on 2026-11-09 (VM `C:\civ7\release\workshop-description-3736063097-2026-11-09.txt`, Mac
+`/Users/sd/Civ7/_staging/2026-11-09-release/`). To bring it up to date: its Creative section still says
+"IN DEVELOPMENT"; the feature list in `dist-workshop/README.md` is current, and the tested patch is
+Civ VII 1.5.0 (Steam build 25516395).

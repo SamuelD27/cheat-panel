@@ -5,7 +5,7 @@ live in-game copy (`Mods/local-cheat-panel` → `src/`, symlink). Keep it curren
 
 | Tree | What it is | Where |
 |---|---|---|
-| **Released (v3)** | Workshop item **3736063097** "ALL MIGHTY SAM'S POWERS", uploaded 2026-06-03, 536 subscribers | Steam (copy: `~/Library/Application Support/Steam/steamapps/workshop/content/1295660/3736063097`) |
+| **Released (v3)** | Workshop item **3736063097** "ALL MIGHTY SAM'S POWERS", uploaded 2026-06-03, Public, 2,006 current subscribers on 2026-11-09 | Steam (copy: `~/Library/Application Support/Steam/steamapps/workshop/content/1295660/3736063097`) |
 | **master** | v3 + every round proven in game, up to the 2026-11-03 river writer | GitHub `SamuelD27/cheat-panel` |
 | **Public v4 build** | the public subset of master, folder `dist-workshop/` (built by `scripts/build-workshop.sh c5f2c94`) | git `master`, VM `C:\civ7\cheat-panel\dist-workshop` |
 | **dev** | master + the 2026-11-05 wonders round (not proven yet) | local branch only; this is what the game loads |
