@@ -1,3 +1,5 @@
+⚠️ **Mac-first workflow** (dev + testing on the Mac; since 2026-11-06 a local Windows VM handles Steam releases and Windows-only tools only). For paths, tooling, FireTuner, and Workshop publishing, defer to the parent `Civ7/CLAUDE.md` and `Civ7/docs/mac-workflow.md` in case of doubt. Paths and scripts below are Mac-current (ported 2026-06-12; the old `.ps1` files remain for reference only).
+
 # Local Cheat Panel — Claude Code project guide
 
 **Read `docs/STATUS.md` first** — it has the current build state, the immediate next action, and the
@@ -28,20 +30,24 @@ error (0x20 — environmental, not the mod).
   JS/HTML file as `<ImportFiles>` in `src/local-cheat-panel.modinfo`.
 - **Never vendor/replace base-game UI files** (resolve at runtime + decorate). `AffectsSavedGames=0`.
 - No `fxs-list` in this build — use plain scrollable DOM rows.
-- The unpacked base UI source at `…\steamapps\common\Sid Meier's Civilization VII\Base\modules\` is the
-  authoritative API reference; trust it over `Research.md` when they disagree.
+- The unpacked base UI source at `~/Library/Application Support/Steam/steamapps/common/Sid Meier's
+  Civilization VII/CivilizationVII.app/Contents/Resources/Base/modules/` is the authoritative API
+  reference; trust it over `Research.md` when they disagree.
 
-## Deploy / test loop
-- Deploy is a live junction `Mods\local-cheat-panel → .\src` (`scripts\link.ps1`). Not Vortex.
+## Deploy / test loop (Mac)
+- Deploy is a live **symlink** `~/Library/Application Support/Civilization VII/Mods/local-cheat-panel → ./src`
+  (`scripts/link.sh`, run once; verified the game follows symlinks). Copy fallback: `scripts/deploy.sh`.
 - JS-only edit → in-game `~` → UI → **Reload UI**. modinfo/database/text/new files → **restart game**.
-- Keep the Workshop **Sovereign** + **Izica** cheat panels DISABLED during dev (they conflict).
-- Logs: `%LOCALAPPDATA%\Firaxis Games\Sid Meier's Civilization VII\Logs\UI.log`; filter `LCP:`
-  (`scripts\tail-log.ps1`).
+- Keep the Workshop **sam-cheat-panel** (the public twin) plus **Sovereign**/**Izica** panels DISABLED
+  during dev — same `panel-lcp` element / same InputActions row → `UNIQUE constraint failed` rollback.
+  Toggle without the UI via tuner: `Modding.disableMods([Modding.getModHandle('sam-cheat-panel')])`.
+- Logs: `~/Library/Application Support/Civilization VII/Logs/UI.log`; filter `LCP:` (`scripts/tail-log.sh`).
+  Mac caveat: mod `console.log` often does NOT reach UI.log — prefer live tuner inspection
+  (`Civ7/tools/tuner_probe.py '<js>'`, port 127.0.0.1:4318, needs `EnableTuner 1` in AppOptions.txt).
 
 ## git on this machine
-`C:\Program Files\Git\cmd\git.exe`. Commit each milestone. PowerShell 5.1 word-splits multi-line/quoted
-commit messages passed inline — write the message to a file (`[System.IO.File]::WriteAllText($tmp,$msg)`)
-and `git commit -F $tmp`.
+Standard macOS git. Commit each milestone; multi-line commit messages work normally in zsh
+(the old PowerShell 5.1 word-splitting workaround is obsolete).
 
 ## Key docs
 - `docs/STATUS.md` — current state / next action / open issues (**start here**).
