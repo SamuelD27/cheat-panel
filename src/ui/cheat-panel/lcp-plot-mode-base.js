@@ -28,7 +28,8 @@
  * Subclasses set this.bannerTitle / this.hintText / this.hintNote (e.g. in initialize(), where
  * this.Context is available). decorate()/undecorate() here show/remove the banner; a subclass that
  * needs its own decorate work (e.g. paint's flash overlay) should override and call super.decorate()/
- * super.undecorate() so the banner is still managed.
+ * super.undecorate() so the banner is still managed. setStatus(text, kind) writes a coloured result line
+ * into the banner (paint uses it for "applying… / done / refused: <reason>").
  *
  * Dual-registration note: this file only defines a base class; the concrete modes still register
  * themselves with InterfaceMode.addHandler and need their DB rows in database/interface-modes.xml.
@@ -39,6 +40,8 @@ import { InterfaceMode, InputHandlerState } from '/base-standard/ui/cheat-panel/
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
 const BANNER_ID = 'lcp-plot-mode-banner';
+// Colours of the banner status line (setStatus): applying / done / done with a note / partly done / failed or refused.
+const STATUS_COLORS = { pending: '#e6b800', busy: '#e6b800', ok: '#7ddc8f', warn: '#ffb347', partial: '#ffb347', fail: '#ff7b6b', refused: '#ff7b6b', info: '#e8dcc0' };
 
 export default class LcpPlotMode extends ChoosePlotInterfaceMode {
     /**
@@ -133,7 +136,29 @@ export default class LcpPlotMode extends ChoosePlotInterfaceMode {
 
             (document.body || document.documentElement).appendChild(el);
             this._banner = el;
+            this._exitBtn = btn;
+            this._statusEl = null;
         } catch (e) { api.ERR('LcpPlotMode banner failed:', e); }
+    }
+
+    /**
+     * Show / replace the one-line status under the banner hint (e.g. the last paint result and its reason).
+     * kind: 'pending' | 'busy' | 'ok' | 'warn' | 'partial' | 'fail' | 'refused' | 'info'. No-op once the banner is gone
+     * (mode exited), so late async results can call it safely.
+     */
+    setStatus(text, kind) {
+        try {
+            const el = this._banner;
+            if (!el || !el.parentNode || typeof document === 'undefined') return;
+            if (!this._statusEl || this._statusEl.parentNode !== el) {
+                const st = document.createElement('div');
+                st.style.cssText = 'margin-top:0.3rem;font-size:0.88rem;line-height:1.35;white-space:normal;max-width:60rem;';
+                el.insertBefore(st, (this._exitBtn && this._exitBtn.parentNode === el) ? this._exitBtn : null);
+                this._statusEl = st;
+            }
+            this._statusEl.style.color = STATUS_COLORS[kind] || STATUS_COLORS.info;
+            this._statusEl.textContent = text || '';
+        } catch (_) { /* cosmetic only */ }
     }
 
     _removeExitBanner() {
@@ -142,5 +167,7 @@ export default class LcpPlotMode extends ChoosePlotInterfaceMode {
             if (el && el.parentNode) el.parentNode.removeChild(el);
         } catch (_) {}
         this._banner = null;
+        this._exitBtn = null;
+        this._statusEl = null;
     }
 }

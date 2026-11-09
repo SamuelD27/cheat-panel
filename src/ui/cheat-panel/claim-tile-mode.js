@@ -27,6 +27,7 @@ class LcpClaimTileMode extends LcpPlotMode {
             api.ERR('claim-tile-mode: no CityID in context — refusing to enter');
             return false;
         }
+        this._edgeRefusalShown = false;   // a fresh banner has no status line yet
         this.bannerTitle = 'CLAIM MODE';
         this.hintText = 'Click tiles to claim them for the city.';
         api.LOG('claim-tile-mode: entered for city', cityID.id, '(click tiles to claim; Esc/right-click to exit)');
@@ -57,11 +58,25 @@ class LcpClaimTileMode extends LcpPlotMode {
         return false;
     }
 
-    /** @override — claim the clicked plot for the target city. */
+    /**
+     * @override — claim the clicked plot for the target city.
+     * 2026-10-21: on a map wider than 128 a tile near the bottom edge past column 127 is refused (api.checkWideMapEdge:
+     * owning it can uncover the strip that crashes the game's terrain renderer). The refusal shows in the banner's
+     * status line and the mode stays active; the check writes one LCPD edge.guard breadcrumb per click.
+     */
     commitPlot(plot) {
         const cityID = this.Context?.CityID;
         if (!cityID) return;
-        api.claimPlotForCity(cityID, { x: plot.x, y: plot.y });
+        const loc = { x: plot.x, y: plot.y };
+        const edge = api.checkWideMapEdge(loc, 'claim-mode');
+        if (!edge.ok) {
+            api.LOG('claim-tile-mode: (' + loc.x + ',' + loc.y + ') refused by the wide-map edge guard (' + edge.reason + ')');
+            this.setStatus(api.wideMapEdgeMessage(edge, 'claim'), 'refused');
+            this._edgeRefusalShown = true;
+            return;
+        }
+        if (this._edgeRefusalShown) { this.setStatus('', 'info'); this._edgeRefusalShown = false; }   // drop a stale refusal
+        api.claimPlotForCity(cityID, loc, { edge });
     }
 }
 

@@ -22,6 +22,12 @@
  *   The Map Paint world-editor moved to the CREATIVE tab (tab-creative.js) in M8 so the minimap can
  *   use the full panel width.
  *
+ *   Fog of war (2026-10-18): "Reveal map" / "Restore fog" (api.revealMap / api.restoreFog — the
+ *   reversible replacement for the old one-way Reveal Map) plus a visual-only "Fog" minimap filter that
+ *   darkens the tiles the player has not explored. These are the only Map-tab parts that change vision.
+ *   Since 2026-10-20 Reveal map is turned off on maps wider or taller than 128 (api.checkRevealMapSize):
+ *   a reveal made the game quit on a 180×94 map. The button greys and the fog line says why.
+ *
  * Module-level _state keeps filters/spotlight/zoom across tab switches in a single session.
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
@@ -47,7 +53,8 @@ function probe(stage, doc) {
 }
 
 const _state = {
-    filters: { cities: true, resources: false, myUnits: true },
+    filters: { cities: true, resources: false, myUnits: true, fog: false },   // fog = minimap fog view (visual only)
+    fogWithUnits: false,    // Fog-of-war section: Reveal also grants vision of units/cities (ON) or terrain only (OFF, the safer default)
     spotlight: new Set(),   // keys: 'res:<ResourceType>' and 'nw:<FeatureType>'
     zoom: 18,               // pixels per tile; +/- buttons clamp to [2, 34]
     userZoomed: false,      // once the user clicks −/+ we stop auto-fitting zoom to the panel width
@@ -64,6 +71,7 @@ const bar = (c) => '<span style="display:inline-block;width:0.95em;height:0.28em
 const tri = (c) => '<span style="display:inline-block;width:0;height:0;border-left:0.32em solid transparent;border-right:0.32em solid transparent;border-bottom:0.55em solid ' + c + ';vertical-align:-0.02em;margin-right:0.22rem;"></span>';
 let _snapshotCache = null;
 let _snapshotInFlight = false;
+let _fogView = null;   // last api.readRevealedStates() result drawn by the Fog filter (tooltip + status reuse it)
 // Bumped on every renderMapTab so async callbacks (teleport read-back) from a PREVIOUS render can
 // detect they're stale and skip touching the old (detached) canvas/snapshot machinery.
 let _renderGen = 0;
@@ -452,6 +460,43 @@ function drawMinimap(canvas, snap, opts) {
     }
     probe('PROBE_10_UNITS');
 
+    // ── Fog view (Fog filter, visual only): darken what the player has NOT explored (state 0) and
+    //    lightly shade explored-but-out-of-sight tiles (state 1), from GameplayMap.getRevealedStates.
+    //    Same batching as the spotlight dim below (chunked hex paths; fillRect squares at tiny zoom). ──
+    const fog = opts.fog;
+    if (filters.fog && fog && fog.states && fog.states.length >= W * H) {
+        const st = fog.states;
+        const layers = [[0, 'rgba(0,0,0,0.82)'], [1, 'rgba(0,0,0,0.36)']];
+        for (const [want, fill] of layers) {
+            ctx.fillStyle = fill;
+            if (cheap) {
+                const cellW = tileSize, cellH = 2 * S;
+                for (let y = 0; y < H; y++) {
+                    const rowBase = y * W;
+                    for (let x = 0; x < W; x++) {
+                        if (st[rowBase + x] !== want) continue;
+                        const { cx, cy } = plotCenter(x, y, H, tileSize);
+                        ctx.fillRect(cx - halfW, cy - S, cellW, cellH);
+                    }
+                }
+            } else {
+                let n = 0;
+                ctx.beginPath();
+                for (let y = 0; y < H; y++) {
+                    const rowBase = y * W;
+                    for (let x = 0; x < W; x++) {
+                        if (st[rowBase + x] !== want) continue;
+                        const { cx, cy } = plotCenter(x, y, H, tileSize);
+                        hexSubPath(ctx, cx, cy, tileSize);
+                        if (++n >= FILL_CHUNK) { ctx.fill(); ctx.beginPath(); n = 0; }
+                    }
+                }
+                if (n > 0) ctx.fill();
+            }
+        }
+    }
+    probe('PROBE_10B_FOG');
+
     // ── Spotlight: ONE chunked fill for all dimmed non-matches, ONE stroke for all rings. ──
     if (matchSet) {
         ctx.fillStyle = 'rgba(6,5,3,0.80)';
@@ -529,6 +574,7 @@ export function renderMapTab(container) {
     filterRow.appendChild(mkToggle('cities',    'Cities',    'Toggle city markers'));
     filterRow.appendChild(mkToggle('resources', 'Resources', 'Toggle strategic/luxury/bonus resource dots'));
     filterRow.appendChild(mkToggle('myUnits',   'Me',        'Toggle your own units (no AI visible)'));
+    filterRow.appendChild(mkToggle('fog',       'Fog',       'Darken the tiles you have not explored (your real fog of war). Visual only: changes nothing in the game.'));
 
     const zoomGroup = document.createElement('div');
     zoomGroup.style.cssText = 'display:flex; gap:0.2rem; margin-left:auto;';
@@ -586,35 +632,274 @@ export function renderMapTab(container) {
 
     container.appendChild(filterRow);
 
-    // ── Reveal Map cheat ──────────────────────────────────────────────────────
-    // Uncovers the whole map for the local player (Visibility.revealAllPlots — verified live 2026-07-13).
-    // One-way (reload a save to restore fog). Does NOT enable teleport to the far hemisphere — unit
-    // placement on Distant Lands is a separate engine age-rule (see api.teleportUnitTo).
-    const revealRow = document.createElement('div');
-    revealRow.style.cssText = 'display:flex; align-items:center; gap:0.5rem; margin:0.1rem 0 0.3rem;';
-    const revealBtn = document.createElement('button');
-    revealBtn.className = 'lcp-row-btn';
-    revealBtn.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem;';
-    revealBtn.textContent = '🗺 Reveal Map';
-    revealBtn.title = 'Uncover the entire map (fog-of-war off). One-way — reload a save to restore fog.';
-    const revealMsg = document.createElement('span');
-    revealMsg.style.cssText = 'font-size:0.75rem; color:#b7a88a;';
-    revealMsg.textContent = 'Fog-of-war: hidden tiles are covered.';
-    revealBtn.addEventListener('click', () => {
-        const ok = api.revealEntireMap();
-        if (ok) {
-            revealMsg.textContent = 'Map revealed ✓ — fog off (reload a save to restore it).';
-            revealMsg.style.color = '#8fce8f';
-            _snapshotCache = null;   // re-read so newly-revealed terrain paints on the minimap
-            setTimeout(() => { redraw(); }, 60);   // let the reveal process a frame before re-snapshot
-        } else {
-            revealMsg.textContent = 'Reveal failed — see UI.log.';
-            revealMsg.style.color = '#d98a8a';
+    // ── Fog of war: Reveal map / Restore fog (2026-10-18) ─────────────────────────────────────
+    // Replaces the old one-way "Reveal Map" button (Visibility.revealAllPlots = permanent vision that no
+    // JS call can take back). api.revealMap() first snapshots the tiles you have not explored, then
+    // marks the terrain explored without vision (Units OFF, the default) or grants vision of every tile
+    // as a TRACKED grant (Units ON); api.restoreFog() removes that grant and marks the snapshot's tiles
+    // unexplored again. Every engine call is feature-detected in api.getFogStatus(): a missing API greys
+    // the button and a click explains why instead of throwing. If the game refuses the undoable reveal,
+    // the old one-way reveal is offered behind a second click (Units ON only). Does NOT enable teleport to
+    // the far hemisphere — unit placement on Distant Lands is a separate engine age-rule (see api.teleportUnitTo).
+    const fogSection = document.createElement('div');
+    fogSection.className = 'lcp-section';
+    fogSection.textContent = '── Fog of war ──';
+    container.appendChild(fogSection);
+
+    const fogRow = document.createElement('div');
+    fogRow.style.cssText = 'display:flex; align-items:center; gap:0.4rem; margin:0.1rem 0 0.25rem; flex-wrap:wrap;';
+    const mkFogBtn = (label, title) => {
+        const b = document.createElement('button');
+        b.className = 'lcp-row-btn';
+        b.style.cssText = 'flex:0 0 auto; padding:0.22rem 0.7rem;';
+        b.textContent = label;
+        b.title = title;
+        fogRow.appendChild(b);
+        return b;
+    };
+    const REVEAL_TITLE = 'Uncover the whole map. The panel first saves which tiles you had not explored, so Restore fog can cover them again.';
+    const revealBtn  = mkFogBtn('Reveal map', REVEAL_TITLE);
+    const restoreBtn = mkFogBtn('Restore fog', 'Cover again the tiles you had not explored before Reveal map. Tiles your units or cities see now stay visible.');
+    const unitsBtn   = mkFogBtn('Units: OFF', 'OFF (default): Reveal map uncovers the terrain only, with no vision and no first contacts. ON: also vision of every unit and city; you meet every civ you see, and that stays.');
+    const forgetBtn  = mkFogBtn('Forget', 'Discard the saved fog snapshot. Changes nothing on the map, but the reveal can then no longer be undone.');
+    forgetBtn.style.marginLeft = 'auto';
+    container.appendChild(fogRow);
+
+    const fogMsg = document.createElement('div');
+    fogMsg.style.cssText = 'font-size:0.8rem; color:#b7a88a; margin:0 0 0.2rem 0; min-height:1.1em;';
+    container.appendChild(fogMsg);
+    const fogNote = document.createElement('div');
+    fogNote.style.cssText = 'font-size:0.72rem; color:#8a7c5c; margin:0 0 0.35rem 0;';
+    fogNote.textContent = 'Restore fog covers again only the tiles you had not explored before revealing; tiles your units or cities see right now stay visible. Restore before the age ends. '
+        + 'Lasting effects that Restore cannot undo: "reveal X% of the map" goals can complete (Antiquity: a free Settler), and probably "Discover all Natural Wonders" '
+        + '(Exploration legacy Wanderlust, and the race to be first). With Units ON you also meet every civ you see, which can start events and quests.';
+    container.appendChild(fogNote);
+
+    const FOG_TONE = { info: '#b7a88a', ok: '#8fce8f', warn: '#e6b800', err: '#d98a8a' };
+    const setFogMsg = (text, tone) => { fogMsg.textContent = text || ''; fogMsg.style.color = FOG_TONE[tone] || FOG_TONE.info; };
+    const setFogBtn = (b, on) => { b.style.opacity = on ? '1' : '0.45'; b.style.cursor = on ? 'pointer' : 'default'; };
+    // Async results (deferred read-back) must not write into a Map tab that was re-rendered or closed.
+    const fogLive = () => {
+        if (renderGen !== _renderGen) return false;
+        try {
+            const b = container.ownerDocument && container.ownerDocument.body;
+            if (b && typeof b.contains === 'function') return b.contains(container);
+        } catch (_) {}
+        return true;
+    };
+    let fogArmUntil = 0;      // two-click confirm for the one-way fallback reveal
+    let fogArmForce = false;  // ... armed because the game refused the undoable reveal (the 2nd click forces the one-way)
+    let forgetArmUntil = 0;   // two-click confirm for Forget
+    // Errors go to the LCPD channel (api.diag): this isolate's console.error never reaches UI.log.
+    const fogUiErr = (stage, e) => { try { api.diag('fog.ui.error:stage=' + api.diagTok(stage) + ',err=' + api.diagTok((e && e.message) || e)); } catch (_) {} };
+    const FOG_UNAVAILABLE = 'Fog tools unavailable (the status check failed; details: LCPD fog.ui.error line in UI.log).';
+    const oneWayOffer = (res) => (res && res.fallback === 'permanent')
+        ? ' Turn Units OFF for a terrain-only reveal, or click Reveal map again within 5 s for the one-way reveal (permanent vision, no undo).'
+        : '';
+
+    const fogWhy = (reason, res) => ({
+        'multiplayer': 'Blocked in multiplayer.',
+        'busy': 'Busy: wait for the current reveal or restore to finish.',
+        'no-map': 'No map is loaded.',
+        'already-revealed': 'Already revealed. Use Restore fog first.',
+        'permanent-done': 'This map was revealed with the one-way method. It cannot be revealed or restored again from the panel.',
+        'snapshot-failed': 'Could not read your fog of war' + (res && res.error ? ' (' + res.error + ')' : '') + '.',
+        'already-permanent': 'You already see every tile' + (res && res.total ? ' (' + res.visible + ' of ' + res.total + ')' : '')
+            + '. That vision comes from a one-way reveal (the old Reveal Map, or Reveal All in the debug window), from a reveal made before the age changed, '
+            + 'or from a Units ON reveal whose saved fog was forgotten. '
+            + 'Nothing to reveal, and the panel cannot remove that vision: only a save from before it has your fog.',
+        'no-read': 'Not available: this game build has no way to read the fog of war.',
+        'no-api': 'Not available: this game build lacks the visibility functions the panel needs.',
+        'no-terrain-api': 'Terrain-only reveal is not available in this build. Turn Units ON to reveal with vision.',
+        'grant-unsafe': 'Not revealed: the game did not confirm that this reveal could be taken back later, so nothing was changed.' + oneWayOffer(res),
+        'grant-refused': 'The game refused the undoable reveal (no grant id came back' + (res && res.ret ? ': ' + res.ret : '') + '). Nothing changed.' + oneWayOffer(res),
+        'terrain-refused': 'The game refused the terrain reveal' + (res && res.ret ? ' (' + res.ret + ')' : '') + '. Nothing changed.'
+            + (res && res.fallback === 'permanent' ? ' Click Reveal map again within 5 s for the one-way reveal (permanent vision, no undo).' : ''),
+        'permanent-failed': 'The one-way reveal failed. Nothing changed.',
+        'engine-threw': 'The game rejected the call' + (res && res.error ? ': ' + res.error : '') + '.' + oneWayOffer(res),
+        'no-record': 'Nothing to restore: reveal with this button first (it saves your fog). A reveal made with the old version or another tool cannot be undone here.',
+        'permanent': 'That reveal was one-way and cannot be undone. Only a save from before it has your fog.',
+        'record-corrupt': 'The saved fog snapshot is damaged. Use Forget to clear it.',
+        'grant-remove-rejected': 'Restore failed: the game rejected the call that takes the reveal\'s vision back. Nothing changed; try again.',
+        'age-changed': 'This reveal was made in an earlier age. Covering its tiles again now would also hide what you explored since, so the panel will not do it. Use Forget to clear it.',
+        'age-vision-removed': 'This reveal was made in an earlier age: its vision is gone now, but its tiles stay uncovered (covering them would also hide what you explored since). The saved snapshot was cleared.',
+        // 2026-10-20 crash guard: res = the size verdict (getFogStatus().size) or the refused revealMap result (W, H, axis)
+        'map-too-large': api.revealSizeMessage(Object.assign({ ok: false }, res || {}, { reason: 'map-too-large' })),
+        'map-size-unknown': api.revealSizeMessage(Object.assign({ ok: false }, res || {}, { reason: 'map-size-unknown' })),
+    }[reason] || ('Not possible right now (' + reason + ').'));
+
+    const describeFog = (st) => {
+        if (!st.cap.sp) return 'Blocked in multiplayer.';
+        const r = st.record;
+        if (r && r.method === 'permanent') return 'Revealed on turn ' + r.turn + ' with the one-way method: it cannot be undone here.';
+        if (r && r.stale) {
+            return 'Revealed on turn ' + r.turn + ' in an earlier age (' + (r.method === 'grant' ? 'with units' : 'terrain only') + '). '
+                + (st.canRestore ? 'Restore fog now only takes its vision back; the tiles stay uncovered.' : 'Its tiles cannot be covered again; use Forget to clear it.');
         }
+        if (r) {
+            return 'Revealed on turn ' + r.turn + ' (' + (r.method === 'grant' ? 'with units' : 'terrain only') + '). Saved fog: '
+                + r.hiddenBefore + ' unexplored tiles' + (st.cap.persist ? ', kept in your save.' : ', kept until Reload UI.');
+        }
+        if (!st.canReveal) return fogWhy(st.revealWhy, st.size || null);
+        return 'Fog of war is on. Reveal map uncovers everything; Restore fog puts your fog back.';
+    };
+
+    // Buttons only (greyed when not possible — a click then explains why). Returns the status used.
+    const refreshFogButtons = () => {
+        let st = null;
+        try { st = api.getFogStatus(); } catch (e) { fogUiErr('status', e); }
+        if (!st) { setFogBtn(revealBtn, false); setFogBtn(restoreBtn, false); return null; }
+        const method = _state.fogWithUnits ? st.revealMethodUnits : st.revealMethodTerrain;
+        const armed = Date.now() < fogArmUntil;
+        if (!armed) fogArmForce = false;
+        const oneWay = (method === 'permanent') || fogArmForce;
+        revealBtn.textContent = oneWay ? (armed ? 'Click again: reveal for good' : 'Reveal map (one-way)') : 'Reveal map';
+        revealBtn.title = (st.size && !st.size.ok) ? api.revealSizeMessage(st.size) : REVEAL_TITLE;   // 2026-10-20 crash guard
+        setFogBtn(revealBtn, st.canReveal && (!!method || fogArmForce));
+        setFogBtn(restoreBtn, st.canRestore);
+        unitsBtn.textContent = 'Units: ' + (_state.fogWithUnits ? 'ON' : 'OFF');
+        unitsBtn.classList.toggle('active', _state.fogWithUnits);
+        forgetBtn.style.display = st.record ? '' : 'none';
+        forgetBtn.textContent = (Date.now() < forgetArmUntil) ? 'Click again to forget' : 'Forget';
+        return st;
+    };
+
+    const restoreText = (r) => {
+        const inSight = (r.verified && r.visibleNow >= 0) ? r.visibleNow : r.kept;
+        switch (r.reason) {
+            case 'restored':         return 'Fog restored ✓: ' + r.hid + ' tiles are unexplored again.';
+            case 'restored-partial': return 'Fog restored ✓: ' + r.hid + ' tiles are unexplored again; ' + inSight + ' stay uncovered because they are in sight right now (usually your units or cities).';
+            case 'nothing-hidden':   return (r.method === 'grant' ? 'Vision removed ✓. ' : '') + 'You had explored the whole map before revealing, so no tile needed covering.';
+            case 'kept-visible':
+                // revealMap refuses when >= 98% of tiles are already in sight, so vision found here came AFTER the reveal
+                if (r.method === 'grant' && r.grantState === 'missing') {
+                    return 'Fog NOT restored: the game no longer had this reveal\'s vision on record, so the panel could not take it back, and the tiles stay in sight. '
+                        + 'Only a save from before the reveal has your fog. Details: LCPD fog.* lines in UI.log.';
+                }
+                if (r.method === 'grant') {
+                    return 'Fog NOT restored: the game took a vision grant back, but the tiles are still in sight. That vision comes from something the panel cannot undo '
+                        + '(a reveal the game did not record, or a one-way reveal such as Reveal All in the debug window). Only a save from before the reveal has your fog. Details: LCPD fog.* lines in UI.log.';
+                }
+                return 'Fog NOT restored: the tiles are in sight from a one-way reveal made after this one (the old Reveal Map, or Reveal All in the debug window), which the panel cannot undo. '
+                    + 'Only a save from before it has your fog.';
+            case 'kept-explored':    return 'Vision removed (other units are hidden again), but the game refused to mark the terrain unexplored, so the explored map stays uncovered. Details: LCPD fog.* lines in UI.log.';
+            case 'kept-all':         return 'The game refused to cover any tile again. Details: LCPD fog.* lines in UI.log.';
+            case 'binding-rejected': return 'Restore failed: the game rejected the un-reveal call (' + (r.firstErr || 'bad arguments') + '). Vision was removed; the explored map stays uncovered.';
+            case 'threw':            return 'Restore failed: ' + (r.firstErr || 'the un-reveal call threw') + '. Vision was removed; the explored map stays uncovered.';
+            default:                 return 'Restore finished (' + r.reason + ').';
+        }
+    };
+
+    revealBtn.addEventListener('click', () => {
+        const st = refreshFogButtons();                 // also drops an expired one-way confirm
+        if (!st) { setFogMsg(FOG_UNAVAILABLE, 'err'); return; }
+        if (!st.canReveal) {
+            const sz = st.size || {};
+            api.diag('fog.ui.reveal:blocked,why=' + st.revealWhy + ',W=' + sz.W + ',H=' + sz.H + ',sizeReason=' + sz.reason);
+            setFogMsg(fogWhy(st.revealWhy, st.size || null), 'warn');
+            return;
+        }
+        const armed = Date.now() < fogArmUntil;
+        const forced = armed && fogArmForce;            // 2nd click after the game refused the undoable reveal
+        const method = forced ? 'permanent' : (_state.fogWithUnits ? st.revealMethodUnits : st.revealMethodTerrain);
+        if (!method) { setFogMsg(fogWhy(_state.fogWithUnits ? 'no-api' : 'no-terrain-api', null), 'warn'); return; }
+        let allowPermanent = false;
+        if (method === 'permanent') {
+            if (!armed) {
+                fogArmUntil = Date.now() + 5000;
+                fogArmForce = false;
+                setFogMsg('This game build only offers the ONE-WAY reveal (permanent vision, no undo). Click again within 5 s to go ahead.', 'warn');
+                refreshFogButtons();
+                setTimeout(() => { if (fogLive()) refreshFogButtons(); }, 5100);
+                return;
+            }
+            allowPermanent = true;
+        }
+        fogArmUntil = 0;
+        fogArmForce = false;
+        setFogMsg('Revealing…', 'info');
+        const res = api.revealMap({
+            withUnits: _state.fogWithUnits || forced,
+            allowPermanent,
+            method: forced ? 'permanent' : undefined,
+            onDone: (r) => {
+                _snapshotCache = null;   // the next draw re-reads the map (cities, units, fog view)
+                if (!fogLive()) return;
+                if (r.ok) {
+                    setFogMsg('Map revealed ✓ (' + (r.method === 'grant' ? 'with units' : r.method === 'terrain' ? 'terrain only' : 'one-way') + '). '
+                        + (r.method === 'permanent' ? 'This one cannot be undone.' : 'Restore fog puts your fog back.'), 'ok');
+                } else {
+                    setFogMsg('The game took the reveal, but the map had not changed after ' + (Math.round(r.ms / 100) / 10) + ' s ('
+                        + r.hiddenNow + ' tiles still unexplored). Restore fog undoes whatever was applied.', 'warn');
+                }
+                refreshFogButtons();
+                redraw();
+            },
+        });
+        if (!res.ok) {
+            setFogMsg(fogWhy(res.reason, res), 'warn');
+            if (res.fallback === 'permanent') {         // the undoable reveal was refused: offer the one-way one behind a 2nd click
+                fogArmUntil = Date.now() + 5000;
+                fogArmForce = true;
+                setTimeout(() => { if (fogLive()) refreshFogButtons(); }, 5100);
+            }
+        }
+        refreshFogButtons();
     });
-    revealRow.appendChild(revealBtn);
-    revealRow.appendChild(revealMsg);
-    container.appendChild(revealRow);
+
+    restoreBtn.addEventListener('click', () => {
+        const st = refreshFogButtons();
+        if (!st) { setFogMsg(FOG_UNAVAILABLE, 'err'); return; }
+        if (!st.canRestore) { setFogMsg(fogWhy(st.restoreWhy, null), 'warn'); return; }
+        setFogMsg('Restoring fog…', 'info');
+        const res = api.restoreFog({
+            onProgress: (pr) => { if (fogLive()) setFogMsg('Restoring fog… ' + pr.done + ' / ' + pr.total + ' tiles', 'info'); },
+            onDone: (r) => {
+                _snapshotCache = null;
+                if (!fogLive()) return;
+                setFogMsg(restoreText(r), r.ok ? 'ok' : 'warn');
+                refreshFogButtons();
+                redraw();
+            },
+        });
+        if (!res.ok) {
+            const partial = (res.reason === 'age-vision-removed');   // an earlier age's reveal: vision taken back, tiles kept
+            setFogMsg(fogWhy(res.reason, res), partial ? 'info' : 'warn');
+            if (partial) { _snapshotCache = null; redraw(); }
+        }
+        refreshFogButtons();
+    });
+
+    unitsBtn.addEventListener('click', () => {
+        _state.fogWithUnits = !_state.fogWithUnits;
+        fogArmUntil = 0;                                // a pending one-way confirm belonged to the other setting
+        fogArmForce = false;
+        api.diag('fog.ui.units:' + (_state.fogWithUnits ? 'on' : 'off'));
+        refreshFogButtons();
+        setFogMsg(_state.fogWithUnits
+            ? 'Units ON: Reveal map also gives vision of every tile, so you see every unit and city and meet every civ you see (that stays after Restore fog). '
+              + 'Restore before you end the turn: meeting someone new while revealed can leave a tile in sight for good.'
+            : 'Units OFF: Reveal map uncovers the terrain only, with no vision: you meet no one and other units stay hidden. City banners may still show on the uncovered tiles.', 'info');
+    });
+
+    forgetBtn.addEventListener('click', () => {
+        if (Date.now() > forgetArmUntil) {
+            forgetArmUntil = Date.now() + 4000;
+            setFogMsg('Forget the saved fog? Restore fog then becomes impossible, and the vision from a Units ON reveal stays for good. Click again within 4 s.', 'warn');
+            refreshFogButtons();
+            setTimeout(() => { if (fogLive()) refreshFogButtons(); }, 4100);
+            return;
+        }
+        forgetArmUntil = 0;
+        const ok = api.forgetFogRecord();
+        setFogMsg(ok ? 'Saved fog forgotten. The map was not changed.' : fogWhy('busy', null), ok ? 'info' : 'warn');
+        refreshFogButtons();
+    });
+
+    {
+        const st0 = refreshFogButtons();
+        setFogMsg(st0 ? describeFog(st0) : FOG_UNAVAILABLE, st0 ? 'info' : 'err');
+    }
 
     // ── Teleport section ──────────────────────────────────────────────────────
     // A full-width LABELED toggle (it used to be a small .lcp-row-btn chip sat right next to
@@ -840,6 +1125,10 @@ export function renderMapTab(container) {
         if (res) parts.push('Resource: <span style="color:' + colorForResource(res.cls) + ';">' + (res.name || strip(res.type, 'RESOURCE_')) + '</span>');
         if (p.river === 1) parts.push('Minor river');
         else if (p.river === 2) parts.push('Navigable river');
+        if (_state.filters.fog && _fogView && _fogView.states) {
+            const fs = _fogView.states[loc.y * snap.width + loc.x];
+            parts.push('Fog: ' + (fs === 0 ? 'unexplored' : fs === 2 ? 'in sight' : 'explored'));
+        }
         tip.innerHTML = parts.join('<br>');
         tip.style.display = 'block';
         // Position near the cursor but keep the whole tooltip inside the viewport (inside the panel).
@@ -917,6 +1206,8 @@ export function renderMapTab(container) {
                 'no-unit': 'No unit to teleport.',
                 'distant-lands': 'Can\'t teleport to Distant Lands — the engine won\'t place units on the far hemisphere this age. Pick a tile on your home continent.',
                 'send-failed': 'The engine refused the teleport (see UI.log).',
+                // 2026-10-21 wide-map edge guard (api.checkWideMapEdge already wrote the edge.guard breadcrumb)
+                'wide-map-edge': api.wideMapEdgeMessage(res.edge, 'teleport') || 'Teleport refused: too close to the bottom edge of this wide map.',
             }[res.reason] || ('Blocked: ' + res.reason);
             setTpMsg(why, true);
         }
@@ -1128,6 +1419,7 @@ export function renderMapTab(container) {
             const m = computeMatchSet(snap, _state.spotlight);
             msg += ' · spotlight: ' + (m ? m.size : 0) + ' tiles (' + _state.spotlight.size + ' filters)';
         }
+        if (_state.filters.fog && _fogView) msg += ' · fog: ' + _fogView.hidden + ' unexplored, ' + _fogView.visible + ' in sight';
         previewMsg.textContent = msg;
     };
 
@@ -1161,6 +1453,15 @@ export function renderMapTab(container) {
         _state.zoom = Math.max(2, Math.min(zMax, z));
     };
 
+    // Fog view for the minimap overlay: re-read on every redraw while the Fog filter is on (one bulk
+    // GameplayMap.getRevealedStates call via api.readRevealedStates); null when the filter is off.
+    const fogForDraw = () => {
+        if (!_state.filters.fog) { _fogView = null; return null; }
+        try { const r = api.readRevealedStates(); _fogView = r.ok ? r : null; }
+        catch (e) { fogUiErr('read-states', e); _fogView = null; }
+        return _fogView;
+    };
+
     const redraw = () => {
         if (!_snapshotCache && !_snapshotInFlight) {
             _snapshotInFlight = true;
@@ -1171,7 +1472,7 @@ export function renderMapTab(container) {
                 _snapshotInFlight = false;
                 if (!_snapshotCache || !_snapshotCache.width) { previewMsg.textContent = 'No map data available.'; return; }
                 fitZoomDefault(_snapshotCache.width);
-                drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+                drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom, fog: fogForDraw() });
                 // Open centred on the capital (else first city / first unit / map centre) so an
                 // overflowing map shows something useful immediately and drags out from there.
                 const foc = (_snapshotCache.cities || []).find(c => c.isCapital)
@@ -1184,7 +1485,7 @@ export function renderMapTab(container) {
         }
         if (_snapshotCache) {
             fitZoomDefault(_snapshotCache.width);
-            drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom });
+            drawMinimap(canvas, _snapshotCache, { filters: _state.filters, spotlight: _state.spotlight, tileSize: _state.zoom, fog: fogForDraw() });
             clampPan();
             setStatus();
         }

@@ -4,17 +4,27 @@
  *
  *   Map Paint. The UI lives here (moved out of the Map tab in M8 so the Map Preview minimap can use the
  *   full panel width). Pick a category + type, then [Paint at clicked tile] closes the panel and enters
- *   INTERFACEMODE_LCP_PAINT_TILE; every plot click applies the current paint via
- *   WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}, with a read-back so the click flashes
- *   GREEN (value stuck) or RED (engine rejected the combo). The Resource category includes a
- *   "(Clear / remove resource)" entry (api.CLEAR_RESOURCE) that erases via setResource(NO_RESOURCE,…,0).
- *   Exit is the shared LcpPlotMode banner / Esc / right-click (Item 2).
+ *   INTERFACEMODE_LCP_PAINT_TILE; every plot click runs api.paintPlotAsync, which applies the paint via
+ *   WorldBuilder.MapPlots.set{Terrain,Feature,Resource,Biome}, waits until the engine has really applied it
+ *   (the write lands a few frames later — reading back at once is what made paint "work half the time"),
+ *   and reports done / done with a note / partly done / refused with the reason. Resource and Feature lists
+ *   start with a "(Clear / remove …)" entry; clearing a natural wonder's tile removes the whole wonder. The
+ *   Wonder category prepares the site (terrain/biome of the clicked anchor and, for multi-tile wonders or
+ *   neighbour rules, the tiles around it) and places the wonder from the clicked anchor tile.
+ *   Exit is the shared LcpPlotMode banner / Esc / right-click (Item 2). The "Recent paint results" list
+ *   (above the type list) shows the last outcomes with their reasons (the paint banner shows them live).
+ *   Type names are tagged when the data says they behave unusually: "Navigable River (experimental)",
+ *   resources "(Distant Lands)" / "(special)" / "(other age)" (e.g. the two "Gold" entries differ this way).
+ *   Each type's explanation shows in the status line when it is selected (and as data-tooltip-content, the
+ *   attribute the base UI's tooltips read — the HTML title attribute is not shown by Gameface).
  *
  * Module-level _state keeps the category/type selection across tab switches in a single session.
  */
 import * as api from '/base-standard/ui/cheat-panel/shared/api.js';
 
 const CATEGORIES = ['Terrain', 'Feature', 'Resource', 'Biome', 'Wonder'];
+const RESULT_COLORS = { ok: '#7ddc8f', warn: '#ffb347', partial: '#ffb347', fail: '#ff7b6b', refused: '#ff7b6b', busy: '#e6b800' };
+const RESULT_WORDS = { ok: 'Done', warn: 'Done (note)', partial: 'Partly', fail: 'Failed', refused: 'Refused', busy: 'Busy' };
 
 const _state = {
     category: 'Terrain',
@@ -33,7 +43,7 @@ export function renderCreativeTab(container, opts = {}) {
 
     container.innerHTML = '';
 
-    // ═══ Map Paint (ON STANDBY — see docs/Minor_todos.md #3) ════════════
+    // ═══ Map Paint ═════════════════════════════════════════════════════
     const paintSection = document.createElement('div');
     paintSection.className = 'lcp-section';
     paintSection.textContent = '── Map Paint (experimental) ──';
@@ -41,20 +51,24 @@ export function renderCreativeTab(container, opts = {}) {
 
     const intro = document.createElement('div');
     intro.style.cssText = 'font-size:0.7rem; color:#8a7c5c; margin-bottom:0.3rem; line-height:1.35;';
-    intro.textContent = 'Paint terrain / feature / resource / biome / natural wonder onto a clicked tile. '
-        + 'Resource has "(Clear / remove resource)". Wonder preps the tile\'s terrain+biome then places the '
-        + 'wonder (single-tile wonders only — multi-tile are flagged "not placeable"). Green flash = applied, '
-        + 'red = engine rejected. Esc / right-click / Exit leaves. The paint applies to GAMEPLAY immediately; '
-        + 'if the 3D terrain mesh doesn\'t redraw (engine limitation), save & reload rebuilds the visuals.';
+    intro.textContent = 'Paint terrain / feature / resource / biome / natural wonder onto clicked tiles. Each click flashes '
+        + 'amber while the game applies it, then green (done), orange (done with a note, or partly done) or red (refused) — the '
+        + 'reason shows in the banner and under "Recent paint results". Terrain also fixes the biome on land/water changes and '
+        + 'removes features that can\'t stay. Wonders reshape the clicked tile (and, for multi-tile wonders or neighbour rules, '
+        + 'the tiles around it for a moment) and put everything back if the game refuses. "(Clear / remove feature)" on a wonder '
+        + 'removes the whole wonder. Esc / right-click / Exit leaves. If the 3D terrain does not redraw, save & reload shows it.';
     container.appendChild(intro);
 
     const statusEl = document.createElement('div');
     statusEl.className = 'lcp-row-msg';
     statusEl.style.cssText = 'font-size:0.8em; line-height:1.3; color:#e6b800; margin:0.2rem 0 0.3rem 0; min-height:1.1em;';
     const updateStatus = () => {
+        statusEl.style.color = '#e6b800';
         if (_state.type) {
-            const label = (_state.type === api.CLEAR_RESOURCE) ? 'Clear resource' : _state.type;
-            statusEl.textContent = 'Selected: ' + _state.category + ' = ' + label;
+            let label = _state.type, hint = '';
+            try { label = api.paintTypeLabel(_state.category, _state.type); } catch (_) {}
+            try { hint = api.paintTypeHint(_state.category, _state.type); } catch (_) {}
+            statusEl.textContent = 'Selected: ' + _state.category + ' = ' + label + (hint ? ' — ' + hint : '');
         } else statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type below, then click [Paint].';
     };
 
@@ -87,13 +101,29 @@ export function renderCreativeTab(container, opts = {}) {
     paintBtn.style.marginBottom = '0.4rem';
     paintBtn.addEventListener('click', () => {
         if (!_state.type) { statusEl.textContent = 'Pick a ' + _state.category.toLowerCase() + ' type first.'; return; }
-        api.enterPaintMode({ category: _state.category, typeString: _state.type }, { closePanel });
+        // Fail loudly HERE (panel still open) for a paint that can never work, instead of on every click.
+        let problem = null;
+        try { problem = api.paintEntryProblem(_state.category, _state.type); } catch (e) { api.ERR('paintEntryProblem failed:', e); }
+        if (problem) {
+            statusEl.style.color = '#ff7b6b';
+            statusEl.textContent = 'Can\'t paint this: ' + problem;
+            api.diag('creative.refused:' + _state.category + '=' + _state.type + ',' + api.diagTok(problem, 300));
+            return;
+        }
+        const ok = api.enterPaintMode({ category: _state.category, typeString: _state.type }, { closePanel });
+        if (ok === false) { statusEl.style.color = '#ff7b6b'; statusEl.textContent = 'Could not enter paint mode (see UI.log LCPD lines).'; }
     });
     container.appendChild(paintBtn);
 
+    // ═══ Recent paint results (newest first; filled by api.paintPlotAsync while painting) ═══
+    renderRecentResults(container);
+
+    // No max-height/overflow cap: a nested overflow div does not scroll in Gameface (only fxs-scrollable does —
+    // the 2026-07-22 Cities-list lesson), so a long Resource list used to hide its last entries. The list now
+    // flows at full height and the panel's outer fxs-scrollable scrolls it.
     const typeListEl = document.createElement('div');
     typeListEl.className = 'lcp-map-type-list';
-    typeListEl.style.cssText = 'display:flex; flex-wrap:wrap; max-height:22rem; overflow-y:auto; padding:0.15rem; gap:0.25rem;';
+    typeListEl.style.cssText = 'display:flex; flex-wrap:wrap; padding:0.15rem; gap:0.25rem;';
     container.appendChild(typeListEl);
 
     const populateTypes = () => {
@@ -112,7 +142,8 @@ export function renderCreativeTab(container, opts = {}) {
             b.className = 'lcp-row-btn';
             b.style.cssText = 'flex: 0 1 auto; margin: 0; padding: 0.15rem 0.4rem; text-align: left;';
             b.textContent = t.name;
-            b.title = t.type;
+            b.title = t.hint || t.type;
+            try { b.setAttribute('data-tooltip-content', t.hint || t.type); } catch (_) {}   // what base UI tooltips read
             if (t.type === _state.type) b.classList.add('active');
             b.addEventListener('click', () => {
                 _state.type = t.type;
@@ -127,4 +158,35 @@ export function renderCreativeTab(container, opts = {}) {
     populateTypes();
     updateStatus();
     api.LOG('rendered creative tab (category=' + _state.category + ')');
+}
+
+// Last few paint outcomes with their reasons, newest first (api keeps up to 8; the tab shows 5).
+function renderRecentResults(container) {
+    let results = [];
+    try { results = api.getRecentPaintResults(); } catch (e) { api.ERR('getRecentPaintResults failed:', e); }
+    const head = document.createElement('div');
+    head.className = 'lcp-section';
+    head.textContent = '── Recent paint results ──';
+    container.appendChild(head);
+    const box = document.createElement('div');
+    box.style.cssText = 'font-size:0.78rem; line-height:1.35; margin-bottom:0.4rem;';
+    container.appendChild(box);
+    if (!results.length) {
+        const none = document.createElement('div');
+        none.className = 'lcp-list-empty';
+        none.textContent = '(nothing painted yet in this session)';
+        box.appendChild(none);
+        return;
+    }
+    for (const r of results.slice(0, 5)) {
+        const row = document.createElement('div');
+        row.style.cssText = 'margin:0.1rem 0; white-space:normal; color:' + (RESULT_COLORS[r.status] || '#e8dcc0') + ';';
+        let when = '';
+        try {
+            const d = new Date(r.t);
+            when = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0') + ' ';
+        } catch (_) {}
+        row.textContent = when + (RESULT_WORDS[r.status] || r.status) + ' — ' + r.message;
+        box.appendChild(row);
+    }
 }
