@@ -23,8 +23,12 @@
  * outcome with its reason, and the Creative tab lists the last results. The old one-shot read-back flashed
  * red on the first click of every tile even when the paint had worked ("works half the time").
  *
- * The 3D terrain mesh may still not redraw live (2026-06-13: camera-pan / end-turn did not rebuild it on
- * build 1.4.x; only a save + reload did) — the data IS applied, and the flash/status read it back.
+ * The 3D terrain mesh does not redraw live for terrain-type changes (2026-06-13 on 1.4.x; 2026-11-02 binary check on
+ * 1.5.0: the in-game view does not listen to TerrainTypeChanged) — the data IS applied, and the flash/status read it
+ * back. A save + reload is expected to show terrain shape (inferred). A painted Navigable River is never drawn as a
+ * river, live or after reload: the 3D map draws rivers from river data that setTerrain does not write. Such tiles get
+ * the panel's own persistent blue mark instead (api.js PAINTED-RIVER STAND-IN OVERLAY, started at the bottom of this
+ * file; its overlay group is separate from this mode's placementOverlayGroup, which the base mode resets on exit).
  */
 import LcpPlotMode from '/base-standard/ui/cheat-panel/lcp-plot-mode-base.js';
 import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
@@ -61,10 +65,16 @@ class LcpPaintTileMode extends LcpPlotMode {
         this._typeLabel = typeLabel;
         this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeLabel;
         this.hintText = 'Click tiles. Amber = applying, green = done, orange = done with a note / partly done, red = refused (reason below).';
-        this.hintNote = '(if the 3D terrain does not change, the data still is — save & reload redraws it)';
+        // 2026-11-02 honest copy: the 3D map has no live redraw for terrain-type changes; a reload is EXPECTED to show
+        // terrain shape (INFERRED, never confirmed in-game) and never shows a painted navigable river (verified).
+        const shapesChange = (category === 'Terrain' || category === 'Wonder');
+        this.hintNote = shapesChange
+            ? 'Terrain shape changes (mountain, hill, flat, water) are expected to show on the 3D map only after a save & reload (not guaranteed). The tile tooltip shows the change right away.'
+            : '(if the 3D map does not change right away, the tile still changed: the tile tooltip shows it, and a save & reload is expected to redraw it)';
         let warning = null;
         try { warning = api.paintEntryWarning(category, typeString); } catch (_) {}
-        if (warning) this.hintNote = warning + ' ' + this.hintNote;
+        if (warning) this.hintNote = warning;   // the river warning replaces the generic note (it already says what reload does)
+        api.diag('paint.mode.enter:' + category + '=' + typeString + ',note=' + (warning ? 'river-warning' : shapesChange ? 'terrain-shape' : 'generic'));
         api.LOG('paint-tile-mode: entered (' + category + ' = ' + typeString + '); click tiles to paint, Esc/right-click to exit');
         return true;
     }
@@ -197,3 +207,11 @@ try {
 } catch (e) {
     api.ERR('paint-tile-mode: failed to register interface mode:', e);
 }
+// Which map-builder calls this context can reach (typeof checks only, nothing is called), logged once at module load
+// so every session's UI.log answers "can the panel reach TerrainBuilder.setRiverInfo?" even with no paint.
+try { api.logPaintApiOnce('paint-tile-mode-load'); } catch (_) { /* diagnostics must never break registration */ }
+// Painted-river stand-in marker (2026-11-02): this module is evaluated at in-game UI load, in the same JS context that
+// runs commitPlot (cheat-panel.js, the game-scope UIScript, imports it), so the marker's overlay group lives here for the
+// whole session. initPaintedRiverOverlay only schedules (engine.whenReady + 2 s, retried until the map is ready) and runs
+// once per context; every paint result redraws it from api.paintPlotAsync. See api.js PAINTED-RIVER STAND-IN OVERLAY.
+try { api.initPaintedRiverOverlay('paint-tile-mode-load'); } catch (_) { /* the marker must never break registration */ }

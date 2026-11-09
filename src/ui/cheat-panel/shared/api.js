@@ -27,14 +27,23 @@ export const ERR = (...a) => console.error('LCP:', ...a);
 //   • ALSO console.error (reaches UI.log from the dock / interface-mode contexts, e.g. paint mode
 //     which closes the panel and detaches the maxWidth element) — belt-and-suspenders across contexts
 let _diagEl = null, _diagDoc = null, _diagN = 0;
+// _diagElDoc = the document the sink element was created in. 2026-11-02: module-load breadcrumbs (paint-tile-mode.js
+// logPaintApiOnce, the painted-river overlay init) can create the sink in the module-global `document` BEFORE the
+// panel's onAttach passes Root.ownerDocument — the document every proven LCPD line came from. If a caller later passes
+// a DIFFERENT document, the sink moves there (one 'diag.sink' line says so). Same document (the expected case) = no-op.
+let _diagElDoc = null;
 export function diagInit(doc) {
     try {
         if (doc) _diagDoc = doc;
         if (!_diagDoc && typeof document !== 'undefined') _diagDoc = document;
+        let rehomed = false;
+        if (_diagEl && doc && _diagElDoc && doc !== _diagElDoc) { _diagEl = null; rehomed = true; }
         if (!_diagEl && _diagDoc) {
             _diagEl = _diagDoc.createElement('div');
             _diagEl.style.display = 'none';
             (_diagDoc.body || _diagDoc.documentElement).appendChild(_diagEl);
+            _diagElDoc = _diagDoc;
+            if (rehomed) diag('diag.sink:rehomed=1,to=caller-doc,globalDoc=' + (typeof document !== 'undefined' && _diagDoc === document));
         }
     } catch (_) { /* diagnostics must never break the panel */ }
 }
@@ -1445,7 +1454,8 @@ export function addPopulationAll(amount) { if (!guardSP()) return; for (const c 
 // The JS WorldBuilder object is isActive / startBlock / endBlock / MapPlots, and MapPlots has eight setters (the
 // four above + setFertility, setOwnership, setRevealed, setAllRevealed): no river, continent or elevation setter.
 // (TerrainBuilder binds river functions, but whether this UI context can reach TerrainBuilder is unprobed — the
-// first paint logs it, see paintApi.)
+// first paint logs it, see paintApi.) Because a painted navigable river is never drawn as a river, the panel draws its
+// own stand-in mark on such tiles (2026-11-02, see PAINTED-RIVER STAND-IN OVERLAY below enterPaintMode).
 //
 // 2026-10-18 REWRITE — why painting "worked half the time":
 //   The old paintPlot read the plot back inside the SAME call. On build 25516395 the write shows up a moment
@@ -1518,7 +1528,7 @@ function paintRecordResult(res) {
     } catch (_) {}
 }
 
-// ── What this UI context exposes (logged once, at the first paint) ──
+// ── What this UI context exposes (logged at the first paint, and since 2026-11-02 also early via logPaintApiOnce) ──
 // TerrainBuilder / ResourceBuilder appear only in base map scripts; whether this HUD context has them is unprobed on
 // 25516395. GameplayMap.getContinentType is used by base UI (continent-layer.js:86, plot-tooltip helpers.js:75);
 // getElevation / getPlotLatitude / isNavigableRiver are bound in the binary but used by map scripts only. The member
@@ -1536,33 +1546,90 @@ function paintMembers(obj) {
     } catch (_) {}
     return names.slice(0, 40).join('/') || 'none';
 }
-function paintApi() {
-    if (_paintApi) return _paintApi;
-    let TB = null, RB = null, GM = null, WB = null;
-    try { TB = (typeof TerrainBuilder !== 'undefined') ? TerrainBuilder : null; } catch (_) {}
-    try { RB = (typeof ResourceBuilder !== 'undefined') ? ResourceBuilder : null; } catch (_) {}
-    try { GM = (typeof GameplayMap !== 'undefined') ? GameplayMap : null; } catch (_) {}
-    try { WB = (typeof WorldBuilder !== 'undefined') ? WorldBuilder : null; } catch (_) {}
-    const A = {
+// Per-module-instance id. api.js is evaluated once per JS context, so paint.api lines sharing inst= came from the
+// same context; ctx= says which caller logged it, href= which document that context runs in.
+const _paintCtxInst = (() => { try { return Date.now().toString(36).slice(-5) + Math.floor(Math.random() * 46656).toString(36); } catch (_) { return '?'; } })();
+function paintCtxText(tag) {
+    let href = 'n/a';
+    try { if (typeof location !== 'undefined' && location) href = String(location.pathname || location.href || 'n/a').split('/').slice(-2).join('/'); } catch (_) {}
+    return 'ctx=' + diagTok(tag, 40) + ',inst=' + _paintCtxInst + ',href=' + diagTok(href, 80) + ',doc=' + (typeof document !== 'undefined');
+}
+/** typeof obj[name] without calling anything ('n/a' when obj is missing, 'throws' when the read throws). */
+function paintTypeOf(obj, name) { try { return obj ? typeof obj[name] : 'n/a'; } catch (_) { return 'throws'; } }
+function paintGlobals() {
+    const G = { TB: null, RB: null, GM: null, WB: null, AB: null };
+    try { G.TB = (typeof TerrainBuilder !== 'undefined') ? TerrainBuilder : null; } catch (_) {}
+    try { G.RB = (typeof ResourceBuilder !== 'undefined') ? ResourceBuilder : null; } catch (_) {}
+    try { G.GM = (typeof GameplayMap !== 'undefined') ? GameplayMap : null; } catch (_) {}
+    try { G.WB = (typeof WorldBuilder !== 'undefined') ? WorldBuilder : null; } catch (_) {}
+    try { G.AB = (typeof AreaBuilder !== 'undefined') ? AreaBuilder : null; } catch (_) {}
+    return G;
+}
+function paintApiFlags(G) {
+    const TB = G.TB, RB = G.RB, GM = G.GM, WB = G.WB;
+    return {
         canHaveFeatureParam: paintFn(TB, 'canHaveFeatureParam'), canHaveFeature: paintFn(TB, 'canHaveFeature'),
         canHaveResource: paintFn(RB, 'canHaveResource'), isResourceValidForAge: paintFn(RB, 'isResourceValidForAge'),
         getElevation: paintFn(GM, 'getElevation'), getPlotLatitude: paintFn(GM, 'getPlotLatitude'),
         getContinentType: paintFn(GM, 'getContinentType'), isNavigableRiver: paintFn(GM, 'isNavigableRiver'),
         startBlock: paintFn(WB, 'startBlock') && paintFn(WB, 'endBlock'),
     };
-    _paintApi = A;
+}
+// The paint.api breadcrumb (+ paint.api.members). typeof checks only: no TerrainBuilder / AreaBuilder function is
+// ever called here. The tb.* / ab.* fields answer "can this context reach the river-data writer
+// (TerrainBuilder.setRiverInfo) and the calls a map script runs after it?". members: 'all' | 'builders' (only the
+// TerrainBuilder / AreaBuilder / ResourceBuilder member lists, and only when one exists).
+function paintApiDiag(tag, G, A, members) {
+    const TB = G.TB, RB = G.RB, GM = G.GM, WB = G.WB, AB = G.AB;
     let mf = 'n/a';
     try { mf = (typeof MapFeatures !== 'undefined' && MapFeatures) ? typeof MapFeatures.getFeatureInfoAt : 'n/a'; } catch (_) {}
-    diag('paint.api:TerrainBuilder=' + (TB ? 'yes' : 'no') + ',canHaveFeatureParam=' + A.canHaveFeatureParam + ',canHaveFeature=' + A.canHaveFeature
+    diag('paint.api:' + paintCtxText(tag) + ',TerrainBuilder=' + (TB ? 'yes' : 'no') + ',canHaveFeatureParam=' + A.canHaveFeatureParam + ',canHaveFeature=' + A.canHaveFeature
         + ',setRiverInfo=' + paintFn(TB, 'setRiverInfo') + ',modelRivers=' + paintFn(TB, 'modelRivers')
+        + ',tb.setRiverInfo=' + paintTypeOf(TB, 'setRiverInfo') + ',tb.finalizeRivers=' + paintTypeOf(TB, 'finalizeRivers')
+        + ',tb.storeWaterData=' + paintTypeOf(TB, 'storeWaterData') + ',tb.validateAndFixTerrain=' + paintTypeOf(TB, 'validateAndFixTerrain')
+        + ',AreaBuilder=' + (AB ? 'yes' : 'no') + ',ab.recalculateAreas=' + paintTypeOf(AB, 'recalculateAreas')
         + ',ResourceBuilder=' + (RB ? 'yes' : 'no') + ',canHaveResource=' + A.canHaveResource + ',isResourceValidForAge=' + A.isResourceValidForAge
         + ',getElevation=' + A.getElevation + ',getPlotLatitude=' + A.getPlotLatitude + ',getContinentType=' + A.getContinentType
         + ',isNavigableRiver=' + A.isNavigableRiver + ',getFeatureInfoAt=' + mf + ',startBlock=' + A.startBlock + ',engineChecks=' + PAINT_USE_ENGINE_CHECKS
         + ',setFeatureType=' + paintFn(TB, 'setFeatureType') + ',getOwner=' + paintFn(GM, 'getOwner')
         + ',playerResources=' + (() => { try { return paintFn(Players.get(GameContext.localPlayerID)?.Resources, 'getResources'); } catch (_) { return false; } })());
-    diag('paint.api.members:WorldBuilder=' + paintMembers(WB) + ';MapPlots=' + paintMembers(WB && WB.MapPlots)
-        + (TB ? ';TerrainBuilder=' + paintMembers(TB) : '') + (RB ? ';ResourceBuilder=' + paintMembers(RB) : ''));
+    if (members === 'all') {
+        diag('paint.api.members:WorldBuilder=' + paintMembers(WB) + ';MapPlots=' + paintMembers(WB && WB.MapPlots)
+            + (TB ? ';TerrainBuilder=' + paintMembers(TB) : '') + (RB ? ';ResourceBuilder=' + paintMembers(RB) : '')
+            + (AB ? ';AreaBuilder=' + paintMembers(AB) : ''));
+    } else if (members === 'builders' && (TB || AB || RB)) {
+        diag('paint.api.members:ctx=' + diagTok(tag, 40) + (TB ? ';TerrainBuilder=' + paintMembers(TB) : '')
+            + (RB ? ';ResourceBuilder=' + paintMembers(RB) : '') + (AB ? ';AreaBuilder=' + paintMembers(AB) : ''));
+    }
+}
+function paintApi() {
+    if (_paintApi) return _paintApi;
+    const G = paintGlobals();
+    const A = paintApiFlags(G);
+    _paintApi = A;
+    paintApiDiag('first-use', G, A, 'all');
     return A;
+}
+// Early, paint-independent copy of the paint.api breadcrumb: once per caller tag per context (the Creative tab's first
+// render, paint-tile-mode.js at module load), so the next UI.log answers "can the panel reach
+// TerrainBuilder.setRiverInfo?" even in a session with no paint. Never throws.
+const _paintApiLogged = Object.create(null);
+export function logPaintApiOnce(tag, _tries = 0) {
+    const t = String(tag || 'unknown');
+    if (_paintApiLogged[t]) return;
+    // A module-load caller can run before <body> exists. Wait (up to 40 × 250 ms) so the first breadcrumb does not
+    // create the maxWidth sink element outside <body>; after that, log anyway (diag's console.error line still goes out).
+    try {
+        if (!_diagEl && (typeof document === 'undefined' || !document || !document.body) && _tries < 40) {
+            setTimeout(() => logPaintApiOnce(t, _tries + 1), 250);
+            return;
+        }
+    } catch (_) {}
+    _paintApiLogged[t] = true;
+    try {
+        const G = paintGlobals();
+        paintApiDiag(t, G, paintApiFlags(G), 'builders');
+    } catch (e) { diag('paint.api:ctx=' + diagTok(t, 40) + ',inst=' + _paintCtxInst + ',THROW,' + paintErrText(e)); }
 }
 
 // ── Placement rules, read once from the gameplay tables the base map generator uses ──
@@ -1683,8 +1750,15 @@ export function getNaturalWonderTypes() {
 function paintWonderEntryProblem(_type) {
     return null;
 }
-const PAINT_RIVER_WARNING = 'Experimental: this sets the navigable-river TERRAIN, but WorldBuilder has no river setter, so the game may not treat the '
-    + 'tile as a river (on 1.4.0 such tiles were neither water nor river). Each click reports what the game says. For a sailable channel, paint Coast.';
+// 2026-11-02: setTerrain writes only the tile's terrain; the 3D map draws rivers from separate river data (verified in the
+// 1.5.0 binary + a third-party save/load probe), so a painted navigable river is never drawn, live or after a reload.
+// "painting doesn't change" (not "the panel can't write"): whether this context can reach TerrainBuilder.setRiverInfo is
+// still unprobed (paint.api tb.setRiverInfo breadcrumb), so the copy states what the paint does, not an engine limit.
+const PAINT_RIVER_WARNING = 'Navigable River changes only the tile\'s terrain. The game draws rivers from separate river data that painting '
+    + 'doesn\'t change, so the 3D map won\'t show a river there: not right away and not after a save & reload. The tile tooltip and the '
+    + 'panel\'s Map tab show the change. For water that boats can use, paint Coast. To remove the river terrain, paint the tile\'s '
+    + 'old terrain back (e.g. Flat or Hills); a forest, marsh, reef or resource that this paint removed does not come back. '
+    + 'With "Mark painted river tiles on the 3D map" on (Creative tab), the panel also tints such tiles blue on the 3D map.';
 
 // Enumerates all types in a paint category for the type-picker list. Returns [{type, name, hint}]: `type` is the *Type
 // string (e.g. "TERRAIN_GRASS"), `name` the localized label (plus a short tag when the data says the type behaves
@@ -1709,7 +1783,7 @@ export function getMapPaintTypes(category) {
         for (const type of Object.keys(src)) {
             if (category === 'Feature' && R.nw[type]) continue;   // natural wonders live in the Wonder category
             let name = src[type].name || type, hint = '';
-            if (category === 'Terrain' && type === 'TERRAIN_NAVIGABLE_RIVER') { name += ' (experimental)'; hint = PAINT_RIVER_WARNING; }
+            if (category === 'Terrain' && type === 'TERRAIN_NAVIGABLE_RIVER') { name += ' (terrain only)'; hint = PAINT_RIVER_WARNING; }
             if (category === 'Feature' && src[type].removable === false) hint = 'The game marks it as non-removable.';
             if (category === 'Resource') {
                 const ages = R.resAges[type], tip = paintLocText(src[type].tip);
@@ -1979,8 +2053,13 @@ let _paintEventsHooked = false;
 function paintEventProbe() {
     if (_paintEventsHooked) return;
     _paintEventsHooked = true;
+    // BiomeTypeChanged is a real bridged event even though gamecore-events.xml omits it. The river / terrain-state /
+    // sub-type / block-end hooks (2026-11-02; names verified in Base/modules/core/data/gamecore-events.xml) show which
+    // events a paint fires: the in-game 3D view listens to TerrainStateChanged / BiomeTypeChanged, not TerrainTypeChanged.
     const names = ['TerrainTypeChanged', 'BiomeTypeChanged', 'FeatureAddedToMap', 'FeatureRemovedFromMap', 'FeatureChanged',
-        'ResourceAddedToMap', 'ResourceRemovedFromMap', 'ResourceChanged'];
+        'ResourceAddedToMap', 'ResourceRemovedFromMap', 'ResourceChanged',
+        'RiverAddedToMap', 'RiverRemovedFromMap', 'TerrainStateChanged', 'TerrainSubTypeChanged', 'WorldBuilderBlockEnd'];
+    let hooked = 0;
     for (const n of names) {
         let count = 0;
         try {
@@ -1991,8 +2070,10 @@ function paintEventProbe() {
                 try { raw = JSON.stringify(data) || ''; if (raw.length > 140) raw = raw.slice(0, 140); } catch (_) {}
                 diag('paint.event:' + n + '#' + count + ',@' + where + ',t=' + Date.now() + ',data=' + diagTok(raw, 140));   // 2026-10-21 cross-review: JSON has ',' -> token
             });
+            hooked++;
         } catch (e) { diag('paint.event:hook-failed,' + n + ',' + paintErrText(e)); }
     }
+    diag('paint.event:hooked=' + hooked + '/' + names.length + ',inst=' + _paintCtxInst);
 }
 
 // ── The map generator's own checks (advisory) ─────────────────────────
@@ -2123,7 +2204,10 @@ function paintPlan(category, type, loc, s, R) {
         if (s.feat && !paintFeatureFits(s.feat, type, biome, R)) { step('Feature', null, 'Removing ' + paintName(s.feat)); P.notes.push('removed ' + paintName(s.feat)); }
         if (domainChange && s.res && !paintResourceFitsTerrain(s.res, type, R)) { step('Resource', null, 'Removing ' + paintName(s.res)); P.notes.push('removed ' + paintName(s.res)); }
         // After the writes land: does the game's river data follow (it has no UI setter)? Did the continent change?
-        if (type === 'TERRAIN_NAVIGABLE_RIVER' || s.river || s.terr === 'TERRAIN_NAVIGABLE_RIVER') P.riverCheck = { want: (type === 'TERRAIN_NAVIGABLE_RIVER') ? 'nav' : null, before: s.riverType };
+        // beforeTerr / removed (2026-11-02): the river result names the terrain to paint back and what this paint removed,
+        // instead of promising that "Flat" undoes it (Flat restores no feature, resource, hill or water).
+        if (type === 'TERRAIN_NAVIGABLE_RIVER' || s.river || s.terr === 'TERRAIN_NAVIGABLE_RIVER') P.riverCheck = { want: (type === 'TERRAIN_NAVIGABLE_RIVER') ? 'nav' : null, before: s.riverType,
+            beforeTerr: s.terr || null, removed: P.notes.filter(n => n.indexOf('removed ') === 0).map(n => n.slice(8)) };
         P.contCheck = true;
         return P;
     }
@@ -2208,12 +2292,31 @@ async function paintRiverPostCheck(id, loc, rc) {
     let navFlag = null;
     try { if (paintApi().isNavigableRiver) navFlag = !!GameplayMap.isNavigableRiver(loc.x, loc.y); } catch (_) {}
     diag('paint.river:' + id + ',want=' + (rc.want || 'keep') + ',before=' + rc.before + ',after=' + after + ',isNavigableRiver=' + navFlag + ',settled=' + w.ok + ',ms=' + w.ms);
+    // Wording per case (2026-11-02): setTerrain never writes river data, so a painted navigable river is never drawn on
+    // the 3D map; the old text said "reports no river here (river type: minor)" when the tile DID have a minor river.
     if (rc.want === 'nav') {
-        if (after === nav) return { status: 'ok', note: 'the game counts it as a navigable river' };
-        return { status: 'warn', note: 'but the game reports no river here (river type: ' + paintRiverWord(after) + '), so boats may not use it; paint Coast for a sailable channel, Flat to undo' };
+        const word = paintRiverWord(after);
+        diag('paint.river.case:' + id + ',' + (after === nav ? (rc.before === nav ? 'real-nav-stays' : 'nav-now') : 'no-nav:' + word));
+        if (after === nav) {
+            return { status: 'ok', note: (rc.before === nav) ? 'the tile already had a real navigable river, so the river stays'
+                                                            : 'the game counts it as a navigable river' };
+        }
+        // Way back (2026-11-02): name the tile's old terrain instead of "Flat to undo" — Flat brings back no feature,
+        // resource, hill or water, and this paint may have removed a forest / reef / resource (P.notes "removed X").
+        const oldT = rc.beforeTerr || null;
+        let oldWater = false;
+        try { const row = oldT ? paintRules().terr[oldT] : null; oldWater = !!(row && row.water); } catch (_) {}
+        const removed = Array.isArray(rc.removed) ? rc.removed : [];
+        const tail = (oldWater ? '' : '; paint Coast for water that boats can use')
+            + '; to remove the river terrain, paint ' + (oldT ? paintName(oldT) : 'the tile\'s old terrain (e.g. Flat)') + ' back'
+            + (removed.length ? ' (that does not bring back the removed ' + removed.join(' and ') + ')' : '');
+        diag('paint.river.tail:' + id + ',oldTerr=' + diagTok(oldT || 'unknown', 40) + ',oldWater=' + oldWater + ',removed=' + removed.length);
+        if (word === 'minor') return { status: 'warn', note: 'but the game has only a minor river here, so the 3D map won\'t show a navigable river (not after a save & reload either) and boats may not be able to use it' + tail };
+        if (word === 'unknown') return { status: 'warn', note: 'but the panel could not read the game\'s river data here; a painted navigable river is not drawn on the 3D map (not after a save & reload either)' + tail };
+        return { status: 'warn', note: 'but the game has no river here, so the 3D map won\'t show a river (not after a save & reload either) and boats may not be able to use it' + tail };
     }
-    if (rc.before === nav && after === nav) return { status: 'warn', note: 'but the game still has a navigable river here (river data can\'t be edited from the UI; a Steam user saw such a tile come back after a reload)' };
-    if (paintIsRiver(rc.before) && after === rc.before) return { status: 'ok', note: 'the ' + paintRiverWord(after) + ' river stays (rivers can\'t be edited from the UI)' };
+    if (rc.before === nav && after === nav) return { status: 'warn', note: 'but the navigable river stays: painting doesn\'t remove river data, so the 3D map keeps drawing the river (also after a save & reload)' };
+    if (paintIsRiver(rc.before) && after === rc.before) return { status: 'ok', note: 'the ' + paintRiverWord(after) + ' river stays (painting doesn\'t change rivers)' };
     if (after !== rc.before) return { status: 'ok', note: 'river: ' + paintRiverWord(rc.before) + ' → ' + paintRiverWord(after) };
     return null;
 }
@@ -2743,6 +2846,7 @@ export function paintPlotAsync(category, typeString, loc, opts = {}) {
         diag('paint.done:' + id + ',status=' + res.status + ',ms=' + res.ms + ',msg=' + diagTok(res.message, 300));
         paintRecordResult(res);
         if (res.late && typeof res.late.verify === 'function') paintScheduleLateCheck(id, res, opts);
+        proAfterPaint(res);   // redraw the painted-river marker (scheduled, try/catch'ed; skips refused / busy)
         return res;
     });
 }
@@ -2756,6 +2860,7 @@ function paintScheduleLateCheck(id, res, opts) {
         const late = paintResult(res.late.status || 'ok', res.late.text || 'The paint landed after all (the game was slow to apply it).', { plots: res.plots });
         late.seq = id; late.ms = res.ms;
         paintRecordResult(late);
+        proAfterPaint(late, 'late');   // the write landed after all: redraw the painted-river marker
         try { if (opts.onLate) opts.onLate(late); } catch (_) {}
     }, PAINT_LATE_CHECK_MS);
 }
@@ -2779,6 +2884,419 @@ export function enterPaintMode({ category, typeString }, opts = {}) {
         LOG('enterPaintMode: entered for', category, '=', typeString);
         return true;
     } catch (e) { ERR('enterPaintMode failed:', e); return false; }
+}
+
+// ─── MOD SETTINGS (localStorage, one shared key) — 2026-11-02 ──────────
+// Civ VII's Coherent localStorage has a global single-key collision bug (getItem can return the FIRST-written key's
+// value whatever key is asked for), so every mod shares ONE key, 'modSettings': a JSON object with one namespaced
+// sub-object per mod (LocalStorage.sqlite on this Mac already holds {"randomWorldsReforged":{...}} under it). The
+// panel's settings live in modSettings.localCheatPanel. Every access is try/catch'ed (storage can be missing or throw),
+// other mods' sub-objects are kept on write, and a stored value that is not a JSON object is NEVER overwritten (it may
+// be another key's value handed back by the collision bug). When storage is unusable, or the write does not read back,
+// the value is kept in memory for this session (_lcpSettingsMem; memory wins over storage only in that case).
+const MOD_SETTINGS_KEY = 'modSettings';
+const MOD_SETTINGS_NS = 'localCheatPanel';
+const _lcpSettingsMem = Object.create(null);
+function modSettingsRead() {
+    try {
+        if (typeof localStorage === 'undefined' || !localStorage) return { ok: false, all: null, why: 'no-storage' };
+        const raw = localStorage.getItem(MOD_SETTINGS_KEY);
+        if (raw === null || raw === undefined || raw === '') return { ok: true, all: {}, why: 'empty' };
+        let all = null;
+        try { all = JSON.parse(raw); } catch (_) { return { ok: false, all: null, why: 'not-json' }; }
+        if (!all || typeof all !== 'object' || Array.isArray(all)) return { ok: false, all: null, why: 'not-object' };
+        return { ok: true, all, why: 'ok' };
+    } catch (e) { return { ok: false, all: null, why: 'threw:' + revealErrText(e) }; }
+}
+/** One panel setting (modSettings.localCheatPanel[name]); dflt when unset or unreadable. Never throws. */
+export function getLcpSetting(name, dflt) {
+    try {
+        if (name in _lcpSettingsMem) return _lcpSettingsMem[name];   // only set while storage could not take the value
+        const r = modSettingsRead();
+        const ns = r.ok ? r.all[MOD_SETTINGS_NS] : null;
+        if (ns && typeof ns === 'object' && !Array.isArray(ns) && Object.prototype.hasOwnProperty.call(ns, name)) return ns[name];
+    } catch (_) {}
+    return dflt;
+}
+/** Store one panel setting; returns true when it was written to localStorage and read back. Never throws. */
+export function setLcpSetting(name, value) {
+    let persisted = false, verified = false, why = '';
+    try {
+        const r = modSettingsRead();
+        if (!r.ok) why = r.why;                                       // missing / foreign value: do not touch storage
+        else {
+            const all = r.all;
+            const ns0 = all[MOD_SETTINGS_NS];
+            const ns = (ns0 && typeof ns0 === 'object' && !Array.isArray(ns0)) ? ns0 : {};
+            ns[name] = value;
+            all[MOD_SETTINGS_NS] = ns;
+            localStorage.setItem(MOD_SETTINGS_KEY, JSON.stringify(all));
+            persisted = true;
+            const back = modSettingsRead();                           // read back (the collision bug makes this worth checking)
+            const bns = back.ok ? back.all[MOD_SETTINGS_NS] : null;
+            verified = !!(bns && typeof bns === 'object' && bns[name] === value);
+            if (!verified) why = 'readback:' + back.why;
+        }
+    } catch (e) { why = 'threw:' + revealErrText(e); }
+    if (persisted && verified) delete _lcpSettingsMem[name];
+    else _lcpSettingsMem[name] = value;
+    diag('settings.set:' + MOD_SETTINGS_NS + '.' + diagTok(name, 40) + '=' + diagTok(value, 40) + ',persisted=' + persisted
+        + ',verified=' + verified + (why ? ',why=' + diagTok(why, 120) : ''));
+    return persisted && verified;
+}
+
+// ─── PAINTED-RIVER STAND-IN OVERLAY (2026-11-02, river investigation candidate #3) ─────────────────────────
+// A painted TERRAIN_NAVIGABLE_RIVER is never drawn as a river: the 3D map draws rivers from river data that setTerrain
+// does not write (see PAINT_RIVER_WARNING). So the panel marks such tiles itself: a semi-transparent water-blue hex with
+// an orange edge on every REVEALED tile whose terrain is navigable river but whose river data is not RIVER_NAVIGABLE
+// (the rule the Map tab minimap uses for its "Painted river" mark). Data-derived: nothing is stored about the tiles;
+// every refresh re-reads GameplayMap, so the marks come back after Reload UI / save & load once a refresh runs again.
+//
+// Overlay API (names copied from shipped JS, not from memory): WorldUI.createOverlayGroup(name, priority) →
+// group.addPlotOverlay() → overlay.addPlots(plotIndices, { fillColor, edgeColor }); group.clearAll() + overlay.clear()
+// (base tuner-input.js:527-536, lenses/layer/discovery-layer.js:8-31, interface-modes/support-city-decoration.js:19-31).
+// Colours are linear {x:R, y:G, z:B, w:A} in 0..1 (core utilities-color.js HexToFloat4; paint-tile-mode.js's flashes).
+// Priority 1 = OVERLAY_PRIORITY.HEX_GRID (base-standard/ui/utilities/utilities-overlay.js: 0 MIN, 2-3 continent/settler
+// lens, 4 PLOT_HIGHLIGHT, 9 CURSOR, 10 MAX), so lens tints and the paint/hover highlights should draw above it. Hard-coded
+// so api.js gains no import (an import that fails to resolve would take the whole panel down). The group belongs to this
+// module and is NEVER the interface mode's placementOverlayGroup (ChoosePlotInterfaceMode.transitionFrom resets that one
+// on every mode exit, interface-mode-choose-plot.js:51).
+//
+// JS context (task B2, read from the code): cheat-panel.js is the game-scope UIScript and statically imports
+// paint-tile-mode.js, tab-creative.js and this file. So the panel code (renderCreativeTab → the toggle), the paint
+// interface mode (LcpPaintTileMode.commitPlot → paintPlotAsync, run by InterfaceMode in the in-game HUD) and this overlay
+// share ONE module instance of api.js in the in-game UI JS context, which lives for the whole game session (until Reload
+// UI / load / exit). The panel's own DOM may be another document (cheat-panel.js injectPanelStyles), but its JS is this
+// module. The toggle therefore calls refreshPaintedRiverOverlay directly. Two safety nets in case the panel ever turns
+// out to run in another JS context (paint.api / paint.overlay breadcrumbs carry inst= to settle it): the setting lives
+// in localStorage (modSettings) and is re-read on every refresh, and the toggle fires the custom engine event
+// 'lcp-painted-river-overlay' that other contexts' copies refresh on (the sending context ignores its own event).
+//
+// Refresh triggers: every paint result (paintPlotAsync, and a late landing), game/UI load (initPaintedRiverOverlay,
+// called by paint-tile-mode.js at module load: after engine.whenReady + 2 s, retried while the map / fog / local player
+// is not ready), the Creative-tab toggle, the local player's turn start, TerrainTypeChanged (debounced; also catches
+// tuner paints) and PlotVisibilityChanged on a painted tile that was still hidden. BeforeUnload clears the group (the
+// support-city-decoration.js pattern), so a Reload UI leaves no orphaned marks behind. Every step is try/catch'ed:
+// a failure here never breaks painting or the panel. Each refresh logs one 'paint.overlay:' breadcrumb.
+// LIVE-UNVERIFIED (needs a probe): marks persisting across turns / panel close / paint-mode exit, priority vs lenses,
+// how a mark looks under fog, and that this context may create overlay groups after load (base code does it at load).
+const PRO_GROUP_NAME = 'LcpPaintedRiverOverlayGroup';
+const PRO_PRIORITY = 1;                                         // OVERLAY_PRIORITY.HEX_GRID (see above)
+const PRO_FILL = { x: 0.10, y: 0.45, z: 0.95, w: 0.45 };        // water blue, semi-transparent
+const PRO_EDGE = { x: 1.00, y: 0.70, z: 0.28, w: 0.95 };        // orange #ffb347, the Map tab's "Painted river" mark
+const PRO_SETTING = 'paintedRiverOverlay';                      // modSettings.localCheatPanel.paintedRiverOverlay
+const PRO_DEFAULT_ON = true;
+const PRO_EVENT = 'lcp-painted-river-overlay';                  // custom UI event (cross-context safety net only)
+const PRO_INIT_DELAY_MS = 2000;                                 // after engine.whenReady, before the first refresh
+const PRO_INIT_RETRY_MS = 2000;
+const PRO_INIT_RETRIES = 15;                                    // ~30 s while the map / fog / local player is not ready
+const PRO_DEBOUNCE_MS = 400;                                    // event-driven refreshes are coalesced
+const PRO_BIG_PLOTS = 128 * 128;                                // above this the breadcrumb flags big=1 (scan ms matters)
+const _pro = {
+    group: null, overlay: null, createErr: '', overlayTries: 0,     // overlayTries: addPlotOverlay() attempts on the kept group
+    init: false, initTag: '', hooked: false,
+    timer: null, due: 0, reasons: [],
+    hiddenKeys: null,                                           // Set of 'x,y' painted tiles hidden by fog at the last refresh
+    shownKeys: null,                                            // Set of 'x,y' tiles marked at the last refresh
+    last: { ok: null, on: null, count: 0, hidden: 0, why: '', at: 0 },
+    lastLogSig: '', runs: 0,
+};
+
+/** Is the painted-river marker switched on (Creative tab; default ON)? Anything but an explicit false is on. */
+export function isPaintedRiverOverlayEnabled() {
+    return getLcpSetting(PRO_SETTING, PRO_DEFAULT_ON) !== false;
+}
+/** Last refresh outcome for the Creative tab label: {on, ok, count, hidden, why, at}. */
+export function getPaintedRiverOverlayState() {
+    let on = true;
+    try { on = isPaintedRiverOverlayEnabled(); } catch (_) {}
+    return Object.assign({}, _pro.last, { on });
+}
+// Create the group + its one plot overlay once (lazily, on the first refresh that has something to draw). Calls are
+// not gated on typeof (native bindings); createOverlayGroup is caught by the caller, addPlotOverlay here (the group is
+// already kept by then, so a retry never makes a second group). Returns true when both exist.
+function proEnsureGroup() {
+    if (_pro.group && _pro.overlay) return true;
+    if (!_pro.group) {
+        if (typeof WorldUI === 'undefined' || !WorldUI) { _pro.createErr = 'no-WorldUI'; return false; }
+        const g = WorldUI.createOverlayGroup(PRO_GROUP_NAME, PRO_PRIORITY);
+        if (!g) { _pro.createErr = 'createOverlayGroup-returned-' + (g === null ? 'null' : typeof g); return false; }
+        // Keep the group as soon as it exists (2026-11-02 fix): if addPlotOverlay() below returns nothing or throws, the
+        // next refresh retries only addPlotOverlay() on THIS group instead of creating another group every time.
+        _pro.group = g;
+    }
+    _pro.overlayTries = (_pro.overlayTries | 0) + 1;
+    let o = null;
+    try { o = _pro.group.addPlotOverlay(); }
+    catch (e) {
+        _pro.createErr = 'addPlotOverlay-threw';
+        if (_pro.overlayTries <= 3) diag('paint.overlay.create:partial=1,stage=addPlotOverlay,tries=' + _pro.overlayTries + ',inst=' + _paintCtxInst + ',err=' + paintErrText(e));
+        return false;
+    }
+    if (!o) {
+        _pro.createErr = 'addPlotOverlay-returned-' + (o === null ? 'null' : typeof o);
+        if (_pro.overlayTries <= 3) diag('paint.overlay.create:partial=1,stage=addPlotOverlay,why=' + _pro.createErr + ',tries=' + _pro.overlayTries + ',inst=' + _paintCtxInst);
+        return false;
+    }
+    _pro.overlay = o;
+    _pro.createErr = '';
+    diag('paint.overlay.create:name=' + PRO_GROUP_NAME + ',priority=' + PRO_PRIORITY + ',inst=' + _paintCtxInst
+        + ',g.clearAll=' + paintTypeOf(_pro.group, 'clearAll') + ',g.setVisible=' + paintTypeOf(_pro.group, 'setVisible')
+        + ',o.addPlots=' + paintTypeOf(o, 'addPlots') + ',o.clear=' + paintTypeOf(o, 'clear') + ',overlayTries=' + _pro.overlayTries);
+    return true;
+}
+// Empty our group (both calls, as the tuner / discovery lens do). True if at least one call went through.
+function proClear() {
+    let did = false;
+    try { if (_pro.group) { _pro.group.clearAll(); did = true; } } catch (e) { diag('paint.overlay.err:stage=clearAll,' + paintErrText(e)); }
+    try { if (_pro.overlay) { _pro.overlay.clear(); did = true; } } catch (e) { diag('paint.overlay.err:stage=clear,' + paintErrText(e)); }
+    return did;
+}
+// Full-map scan: tiles whose terrain is TERRAIN_NAVIGABLE_RIVER but whose river data is not RIVER_NAVIGABLE. Terrain is
+// read the way readPaintType / getMapSnapshot read it (GameplayMap.getTerrainType → GameInfo.Terrains.lookup), with
+// getMapSnapshot's per-raw-value cache so GameInfo is asked once per distinct terrain, not once per plot; river data
+// through paintRiverRaw / paintRiverNav (null = unreadable, which counts as "no river data", as on the minimap).
+function proScan(W, H) {
+    const t0 = Date.now();
+    const nav = paintRiverNav();
+    const isNav = Object.create(null);
+    const out = { found: [], navTerr: 0, real: 0, unk: 0, errs: 0, ms: 0 };
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            let t;
+            try { t = GameplayMap.getTerrainType(x, y); } catch (_) { out.errs++; continue; }
+            let hit = isNav[t];
+            if (hit === undefined) {
+                let name = null;
+                try { name = GameInfo.Terrains.lookup(t)?.TerrainType || null; } catch (_) {}
+                hit = isNav[t] = (name === 'TERRAIN_NAVIGABLE_RIVER');
+            }
+            if (!hit) continue;
+            out.navTerr++;
+            const rt = paintRiverRaw({ x, y });
+            if (rt === nav) { out.real++; continue; }
+            if (rt == null) out.unk++;
+            out.found.push({ x, y, rt });
+        }
+    }
+    out.ms = Date.now() - t0;
+    return out;
+}
+function proPlotIndex(x, y, W) {
+    try { if (typeof GameplayMap.getIndexFromXY === 'function') { const i = GameplayMap.getIndexFromXY(x, y); if (Number.isInteger(i) && i >= 0) return i; } } catch (_) {}
+    return x + W * y;   // base yields-layer.js:65 computes plot indices this way
+}
+// Coalesce event-driven refreshes: one timer at a time, carrying every reason that asked for it. A request that wants
+// to run sooner than the pending timer pulls it forward (a paint's TerrainTypeChanged queues a 400 ms refresh just
+// before the paint result asks for 50 ms).
+function proSchedule(reason, ms) {
+    try {
+        if (_pro.reasons.length < 6 && _pro.reasons.indexOf(reason) < 0) _pro.reasons.push(reason);
+        const wait = Math.max(0, ms | 0);
+        const due = Date.now() + wait;
+        if (_pro.timer != null) {
+            if (due >= _pro.due) return;
+            try { clearTimeout(_pro.timer); } catch (_) {}
+        }
+        _pro.due = due;
+        _pro.timer = setTimeout(() => {
+            _pro.timer = null;
+            const why = _pro.reasons.join('+') || reason;
+            _pro.reasons = [];
+            refreshPaintedRiverOverlay(why);
+        }, wait);
+    } catch (e) { diag('paint.overlay.err:stage=schedule,' + paintErrText(e)); }
+}
+// After a paint result (paintPlotAsync / late landing): refresh unless nothing was written (refused / busy).
+function proAfterPaint(res, tag) {
+    try {
+        if (!res || res.status === 'refused' || res.status === 'busy') return;
+        proSchedule('paint#' + res.seq + ':' + res.status + (tag ? ':' + tag : ''), 50);
+    } catch (_) { /* the marker must never break painting */ }
+}
+// Engine events, hooked once per context (from the delayed init start, so no breadcrumb runs before <body> exists).
+function proHookEvents() {
+    if (_pro.hooked) return;
+    _pro.hooked = true;
+    if (typeof engine === 'undefined' || !engine || typeof engine.on !== 'function') { diag('paint.overlay.hook:engine=no,inst=' + _paintCtxInst); return; }
+    const hook = (name, fn) => {
+        try {
+            engine.on(name, (d) => { try { fn(d); } catch (e) { diag('paint.overlay.err:stage=event-' + name + ',' + paintErrText(e)); } });
+            return 1;
+        } catch (e) { diag('paint.overlay.hook:failed=' + name + ',' + paintErrText(e)); return 0; }
+    };
+    let n = 0;
+    n += hook('BeforeUnload', () => {             // Reload UI / leaving the game: leave no orphaned marks behind
+        const did = proClear();
+        diag('paint.overlay:reason=unload,cleared=' + did + ',inst=' + _paintCtxInst);
+    });
+    n += hook('PlayerTurnActivated', (d) => { if (d && d.player === GameContext.localPlayerID) proSchedule('turn', PRO_DEBOUNCE_MS); });
+    n += hook('TerrainTypeChanged', () => proSchedule('terrain-event', PRO_DEBOUNCE_MS));
+    // A painted tile that was hidden at the last refresh came into view, or a marked one was covered again (the Map
+    // tab's "Restore fog" re-hides tiles through setRevealed, which emits this event). Payload {location, visibility}
+    // as base yields-layer.js:64 reads it. Two Set lookups per event, and none while no painted tile exists.
+    n += hook('PlotVisibilityChanged', (d) => {
+        const hid = _pro.hiddenKeys, shown = _pro.shownKeys;
+        if ((!hid || !hid.size) && (!shown || !shown.size)) return;
+        if (!d || !d.location) return;
+        const k = d.location.x + ',' + d.location.y;
+        const HIDDEN = (typeof RevealedStates !== 'undefined' && RevealedStates && RevealedStates.HIDDEN !== undefined) ? RevealedStates.HIDDEN : 0;
+        if (hid && hid.has(k) && d.visibility !== HIDDEN) proSchedule('reveal', PRO_DEBOUNCE_MS);
+        else if (shown && shown.has(k) && d.visibility === HIDDEN) proSchedule('fogged', PRO_DEBOUNCE_MS);
+    });
+    n += hook(PRO_EVENT, (d) => {                 // the toggle in another context (never fires for our own toggle)
+        if (d && d.inst === _paintCtxInst) return;
+        proSchedule('toggle-event', 0);
+    });
+    diag('paint.overlay.hook:hooked=' + n + '/5,inst=' + _paintCtxInst);
+}
+
+/**
+ * Redraw the painted-river marker from the map. Never throws. Returns {ok, on, count, hidden, why, retry, ms}:
+ * count = tiles marked, hidden = painted tiles left out because the local player has not explored them, retry = true
+ * when the map / fog / local player was not ready (the load-time init tries again). One 'paint.overlay:' breadcrumb.
+ */
+export function refreshPaintedRiverOverlay(reason) {
+    const t0 = Date.now();
+    const why = diagTok(reason || '?', 60);
+    _pro.runs++;
+    let stage = 'start', W = 0, H = 0, scan = null, fog = 'skip', drawn = 'no';
+    const finish = (r) => {
+        r.ms = Date.now() - t0;
+        try {
+            _pro.last = { ok: r.ok, on: r.on, count: r.count | 0, hidden: r.hidden | 0, why: r.why || '', at: Date.now() };
+            const at = (r.shown || []).slice(0, 6).map(f => f.x + '/' + f.y).join(';');
+            const sig = r.ok + '|' + r.on + '|' + r.count + '|' + r.hidden + '|' + at + '|' + (r.why || '');
+            // a turn-start refresh that changed nothing stays out of UI.log (long games would fill it otherwise)
+            if (!(why === 'turn' && sig === _pro.lastLogSig)) {
+                diag('paint.overlay:reason=' + why + ',on=' + r.on + ',ok=' + r.ok + ',count=' + (r.count | 0) + ',hidden=' + (r.hidden | 0)
+                    + (scan ? ',navTerr=' + scan.navTerr + ',real=' + scan.real + ',unk=' + scan.unk + ',scanMs=' + scan.ms + (scan.errs ? ',readErrs=' + scan.errs : '') : '')
+                    + ',ms=' + r.ms + ',map=' + W + 'x' + H + (W * H > PRO_BIG_PLOTS ? ',big=1' : '') + ',fog=' + diagTok(fog, 40) + ',drawn=' + drawn
+                    + (at ? ',at=' + at : '') + ',run=' + _pro.runs + ',inst=' + _paintCtxInst
+                    + (r.why ? ',why=' + diagTok(r.why, 80) : '') + (r.err ? ',stage=' + stage + ',err=' + r.err : ''));
+            }
+            _pro.lastLogSig = sig;
+            LOG('painted-river overlay: reason=' + why + ' on=' + r.on + ' ok=' + r.ok + ' count=' + r.count + ' hidden=' + r.hidden + ' ms=' + r.ms + (r.why ? ' why=' + r.why : ''));
+        } catch (_) { /* logging must never throw */ }
+        return r;
+    };
+    try {
+        // STEP 1/5: is the marker wanted? (off, or a multiplayer game → clear whatever is drawn)
+        stage = 'setting';
+        const mp = isMultiplayer();
+        const on = !mp && isPaintedRiverOverlayEnabled();
+        if (!on) {
+            stage = 'clear';
+            const cleared = proClear();
+            drawn = cleared ? 'cleared' : 'no';
+            _pro.hiddenKeys = null;
+            _pro.shownKeys = null;
+            return finish({ ok: true, on: false, count: 0, hidden: 0, why: mp ? 'multiplayer' : 'off' });
+        }
+        // STEP 2/5: map size (0 while the game is still loading)
+        stage = 'map';
+        W = GameplayMap.getGridWidth() | 0;
+        H = GameplayMap.getGridHeight() | 0;
+        if (!W || !H) return finish({ ok: false, on: true, count: 0, hidden: 0, why: 'no-map', retry: true });
+        // STEP 3/5: full-map scan for navigable-river terrain without navigable river data
+        stage = 'scan';
+        scan = proScan(W, H);
+        if (scan.errs >= W * H) return finish({ ok: false, on: true, count: 0, hidden: 0, why: 'terrain-unreadable', retry: true });
+        // STEP 4/5: keep only tiles the local player has explored (read-only: fog is never changed here)
+        stage = 'fog';
+        let shown = scan.found;
+        const hiddenList = [];
+        if (scan.found.length) {
+            let me = -1;
+            try { me = GameContext.localPlayerID; } catch (_) {}
+            if (typeof me !== 'number' || me < 0) return finish({ ok: false, on: true, count: 0, hidden: 0, why: 'no-local-player', retry: true });
+            const rs = readRevealedStates(me);
+            if (!rs.ok) {
+                fog = 'unreadable:' + rs.error;          // DECISION: show every painted tile (the player painted them)
+            } else if (rs.revealed + rs.visible === 0) {
+                fog = 'not-ready';                       // no explored tile at all = fog not loaded yet: keep the old marks
+                return finish({ ok: false, on: true, count: 0, hidden: 0, why: 'fog-not-ready', retry: true });
+            } else {
+                const HIDDEN = (typeof RevealedStates !== 'undefined' && RevealedStates && RevealedStates.HIDDEN !== undefined) ? RevealedStates.HIDDEN : 0;
+                shown = [];
+                for (const f of scan.found) {
+                    const s = (f.y < rs.H && f.x < rs.W) ? rs.states[f.y * rs.W + f.x] : HIDDEN;
+                    if (s === HIDDEN) hiddenList.push(f); else shown.push(f);
+                }
+                fog = rs.source;
+            }
+        }
+        _pro.hiddenKeys = hiddenList.length ? new Set(hiddenList.map(f => f.x + ',' + f.y)) : null;
+        _pro.shownKeys = shown.length ? new Set(shown.map(f => f.x + ',' + f.y)) : null;
+        // STEP 5/5: redraw our own group (created on the first refresh that has something to draw)
+        stage = 'draw';
+        if (!shown.length && !_pro.overlay) {
+            drawn = 'nothing';                           // nothing to mark and nothing drawn yet: no group / plot overlay needed
+        } else {
+            stage = 'create';
+            if (!proEnsureGroup()) return finish({ ok: false, on: true, count: 0, hidden: hiddenList.length, why: _pro.createErr || 'no-group', shown });
+            stage = 'draw';
+            proClear();
+            if (shown.length) {
+                const idx = shown.map(f => proPlotIndex(f.x, f.y, W));
+                _pro.overlay.addPlots(idx, { fillColor: PRO_FILL, edgeColor: PRO_EDGE });
+                drawn = 'yes';
+            } else drawn = 'cleared';
+        }
+        return finish({ ok: true, on: true, count: shown.length, hidden: hiddenList.length, shown });
+    } catch (e) {
+        ERR('refreshPaintedRiverOverlay failed at', stage, e);
+        return finish({ ok: false, on: null, count: 0, hidden: 0, why: 'threw', err: paintErrText(e) });
+    }
+}
+
+/**
+ * Creative-tab toggle. Persists the choice (modSettings), redraws at once (off = cleared), and tells any other UI
+ * context (custom engine event). Returns {on, persisted, ok, count, hidden, why}. Never throws.
+ */
+export function setPaintedRiverOverlayEnabled(on, source) {
+    const want = !!on;
+    diag('paint.overlay.toggle:on=' + want + ',src=' + diagTok(source || '?', 30) + ',inst=' + _paintCtxInst);
+    let persisted = false;
+    try { persisted = setLcpSetting(PRO_SETTING, want); } catch (e) { diag('paint.overlay.err:stage=persist,' + paintErrText(e)); }
+    let r = null;
+    try { r = refreshPaintedRiverOverlay('toggle-' + (want ? 'on' : 'off')); } catch (_) {}
+    try {
+        if (typeof engine !== 'undefined' && engine && typeof engine.trigger === 'function') engine.trigger(PRO_EVENT, { on: want, inst: _paintCtxInst });
+    } catch (e) { diag('paint.overlay.err:stage=trigger,' + paintErrText(e)); }
+    return { on: want, persisted, ok: !!(r && r.ok), count: r ? (r.count | 0) : 0, hidden: r ? (r.hidden | 0) : 0, why: r ? (r.why || '') : 'no-result' };
+}
+
+/**
+ * Once per JS context, at game/UI load (paint-tile-mode.js module load): hook the refresh events and draw the first
+ * marks after engine.whenReady + PRO_INIT_DELAY_MS, retrying every PRO_INIT_RETRY_MS (up to PRO_INIT_RETRIES) while the
+ * map / fog / local player is not ready. Nothing runs synchronously here (no breadcrumb before <body> exists). Never throws.
+ */
+export function initPaintedRiverOverlay(tag) {
+    if (_pro.init) return;
+    _pro.init = true;
+    _pro.initTag = String(tag || '?');
+    const attempt = (n) => {
+        let r = null;
+        try { r = refreshPaintedRiverOverlay('init#' + n); } catch (_) {}
+        if (r && r.retry && n < PRO_INIT_RETRIES) { setTimeout(() => attempt(n + 1), PRO_INIT_RETRY_MS); return; }
+        let wui = 'n/a';
+        try { wui = (typeof WorldUI !== 'undefined' && WorldUI) ? typeof WorldUI.createOverlayGroup : 'n/a'; } catch (_) { wui = 'throws'; }
+        diag('paint.overlay.init:tag=' + diagTok(_pro.initTag, 40) + ',attempts=' + (n + 1) + ',final=' + (r ? (r.ok ? 'ok' : diagTok(r.why, 40)) : 'none')
+            + ',count=' + (r ? (r.count | 0) : '?') + ',on=' + (r ? r.on : '?') + ',createOverlayGroup=' + wui + ',inst=' + _paintCtxInst);
+    };
+    const start = () => {
+        try { proHookEvents(); } catch (e) { try { diag('paint.overlay.err:stage=hook,' + paintErrText(e)); } catch (_) {} }
+        attempt(0);
+    };
+    const later = () => { try { setTimeout(start, PRO_INIT_DELAY_MS); } catch (_) {} };
+    try {
+        if (typeof engine !== 'undefined' && engine && engine.whenReady && typeof engine.whenReady.then === 'function') {
+            engine.whenReady.then(later, later);
+            return;
+        }
+    } catch (_) {}
+    later();
 }
 
 // ─── MAP PREVIEW (M5.2) ───────────────────────────────────────────────
@@ -2823,6 +3341,18 @@ function mapRiverDiag(W, H, raw) {
         const parts = Object.keys(raw).sort().map((k) => diagTok(k) + ':' + raw[k]);
         diag('map.rivers:' + key + ',raw=' + parts.join(';') + ',none=' + paintRiverNone() + ',nav=' + paintRiverNav()
             + ',src=' + ((typeof RiverTypes !== 'undefined') ? 'RiverTypes' : 'fallback'));
+    } catch (_) { /* diagnostics must never break the minimap */ }
+}
+// Navigable-river terrain vs river data, logged whenever the counts change (a paint changes them; a re-read of the
+// same map does not), so the test log shows the painted river tiles the minimap marks.
+let _mapNavRiverDiagKey = '';
+function mapNavRiverDiag(W, H, n) {
+    try {
+        const key = W + 'x' + H + ':' + n.real + '/' + n.painted + '/' + n.dataOnly + '/' + n.at.join(';');
+        if (_mapNavRiverDiagKey === key) return;
+        _mapNavRiverDiagKey = key;
+        diag('map.navriver:' + W + 'x' + H + ',real=' + n.real + ',painted=' + n.painted + ',dataOnly=' + n.dataOnly
+            + (n.at.length ? ',paintedAt=' + n.at.join(';') : ''));
     } catch (_) { /* diagnostics must never break the minimap */ }
 }
 
@@ -2884,6 +3414,9 @@ export function getMapSnapshot(opts = {}) {
     // non-river plot (-1) drew a minor-river stroke, real minor rivers (0) drew nothing, and navigable rivers (1)
     // drew and read as minor. Fixed 2026-10-20 (integration step); classed by paintRiverWord, as paint does.
     const rivRaw = Object.create(null);   // raw getRiverType value -> plot count, for the one-time breadcrumb
+    // real = navigable-river terrain + navigable river data; painted = that terrain without it; dataOnly = navigable river
+    // data under another terrain (e.g. a river painted over with Flat). at = first painted tiles as x/y:riverClass.
+    const navRiv = { real: 0, painted: 0, dataOnly: 0, at: [] };
 
     const plots = new Array(W * H);
     const resources = [];
@@ -2906,6 +3439,11 @@ export function getMapSnapshot(opts = {}) {
             try { nw       = !!GameplayMap.isNaturalWonder(x, y); } catch (_) {}
             try { const fi = resolveFeature(GameplayMap.getFeatureType(x, y)); feat = fi.type; featName = fi.name; } catch (_) {}
             hills = (terr === 'TERRAIN_HILL'); // TERRAIN_HILL is land + elevated, see base data
+            // navigable-river terrain vs the game's river data (tab-map marks terrain-without-data as painted)
+            if (terr === 'TERRAIN_NAVIGABLE_RIVER') {
+                if (river === 2) navRiv.real++;
+                else { navRiv.painted++; if (navRiv.at.length < 6) navRiv.at.push(x + '/' + y + ':' + river); }
+            } else if (river === 2) navRiv.dataOnly++;
 
             if (includeResources) {
                 let r = -1;
@@ -2920,6 +3458,7 @@ export function getMapSnapshot(opts = {}) {
         }
     }
     mapRiverDiag(W, H, rivRaw);
+    mapNavRiverDiag(W, H, navRiv);
 
     const cities = [];
     if (includeCities) {

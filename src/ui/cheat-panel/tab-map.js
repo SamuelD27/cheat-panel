@@ -8,6 +8,11 @@
  *   "see the hidden map without discovering it" view.
  *
  *     - Feature shading (forest/jungle/reef/ice/…) on top of the biome tint.
+ *     - Navigable-river terrain draws as a blue hex (2026-11-02). One the game has no navigable river data for —
+ *       what a Creative "Navigable River" paint makes, since setTerrain never writes river data — also gets an
+ *       orange edge (orange dot at tiny zoom), a legend chip and a tooltip line. The thin navigable-river line is
+ *       drawn only for navigable river data under other terrain (e.g. Flat painted over a real river), with its own
+ *       legend bar "Navigable river (other terrain)" and tooltip line.
  *     - Hover tooltip: shows terrain/biome/feature/resource/coords for the plot under the cursor.
  *     - Click-to-pan: clicking a plot pans the real game camera there (api.lookAtPlot, read-only).
  *     - Spotlight filter: multi-select the resources / natural wonders present on the map; when any
@@ -69,9 +74,12 @@ const _state = {
 const sq  = (c) => '<span style="display:inline-block;width:0.62em;height:0.62em;background:' + c + ';vertical-align:-0.06em;margin-right:0.22rem;border-radius:1px;"></span>';
 const bar = (c) => '<span style="display:inline-block;width:0.95em;height:0.28em;background:' + c + ';vertical-align:0.1em;margin-right:0.22rem;border-radius:1px;"></span>';
 const tri = (c) => '<span style="display:inline-block;width:0;height:0;border-left:0.32em solid transparent;border-right:0.32em solid transparent;border-bottom:0.55em solid ' + c + ';vertical-align:-0.02em;margin-right:0.22rem;"></span>';
+// Filled square with a coloured edge (0.42em + 2 × 0.1em border = the same 0.62em box as sq, no box-sizing needed).
+const sqEdge = (c, e) => '<span style="display:inline-block;width:0.42em;height:0.42em;background:' + c + ';border:0.1em solid ' + e + ';vertical-align:-0.06em;margin-right:0.22rem;border-radius:1px;"></span>';
 let _snapshotCache = null;
 let _snapshotInFlight = false;
 let _fogView = null;   // last api.readRevealedStates() result drawn by the Fog filter (tooltip + status reuse it)
+let _paintedRiverDrawKey = '';   // last map.draw.paintedRiver breadcrumb (count + mark style), so it logs only on change
 // Bumped on every renderMapTab so async callbacks (teleport read-back) from a PREVIOUS render can
 // detect they're stale and skip touching the old (detached) canvas/snapshot machinery.
 let _renderGen = 0;
@@ -89,6 +97,12 @@ const DEFAULT_LAND_RGB = [120, 120, 80];
 const OCEAN = '#1a3358', COAST = '#3a7ab0', NAV_RIVER = '#4a90d0', MOUNTAIN = '#5a5a5a';
 const NW_FILL = '#fcd040';
 const RIVER_MINOR = '#7ec8e3', RIVER_NAV = '#4a90d0';
+// Navigable-river TERRAIN on a plot the game has no navigable river data for (plots[i].river !== 2) — what a
+// Creative paint makes, since setTerrain never writes river data. Same blue fill + this orange mark (the Creative
+// tab's "done with a note" colour) so a painted tile is visibly different from a real river.
+const NAV_RIVER_TERRAIN = 'TERRAIN_NAVIGABLE_RIVER';
+const PAINTED_RIVER_MARK = '#ffb347';
+const isPaintedRiver = (p) => !!p && p.terr === NAV_RIVER_TERRAIN && p.river !== 2;
 
 // Feature shading — matched by substring so it survives the various exact FeatureType spellings.
 // [r,g,b, alpha] : the feature color is blended over the biome base at the given alpha.
@@ -120,11 +134,14 @@ function blend(base, rgba) {
 
 function colorForPlot(p) {
     if (!p) return '#000';
+    // Checked BEFORE the water branch: TERRAIN_NAVIGABLE_RIVER has no Water attribute (base terrain.xml:79) and
+    // real river tiles read water=false, so the old test nested under p.water never ran and every navigable-river
+    // hex (real or painted) drew in its biome colour. Painted ones get an extra orange mark in drawMinimap.
+    if (p.terr === NAV_RIVER_TERRAIN) return NAV_RIVER;
     if (p.water) {
         let c = '#2a5080';
         if (p.terr === 'TERRAIN_OCEAN') c = OCEAN;
         else if (p.terr === 'TERRAIN_COAST') c = COAST;
-        else if (p.terr === 'TERRAIN_NAVIGABLE_RIVER') c = NAV_RIVER;
         // Reef/ice can sit on water tiles — let the feature tint show.
         const t = featureTint(p.feat);
         if (t) {
@@ -310,6 +327,9 @@ function drawMinimap(canvas, snap, opts) {
     const cheap = (tileSize < 4) || (W * H > 10000 && tileSize < 6);
 
     probe('PROBE_4_BATCH_BEGIN');
+    // Centres of navigable-river-terrain plots with no navigable river data (painted) — marked in orange below.
+    const paintedRiverPts = [];
+    let navDataOnly = -1;   // hexes with the navigable river LINE (river data under other terrain); -1 = cheap path, not drawn
     if (cheap) {
         const cheapBatches = new Map();   // color -> flat [px, py, ...]
         for (let y = 0; y < H; y++) {
@@ -322,6 +342,7 @@ function drawMinimap(canvas, snap, opts) {
                 let arr = cheapBatches.get(col);
                 if (!arr) { arr = []; cheapBatches.set(col, arr); }
                 arr.push(cx - halfW, cy - S);
+                if (isPaintedRiver(p)) paintedRiverPts.push(cx, cy);
             }
         }
         probe('PROBE_5_BATCH_FILL');
@@ -329,6 +350,12 @@ function drawMinimap(canvas, snap, opts) {
         for (const [col, arr] of cheapBatches) {
             ctx.fillStyle = col;
             for (let i = 0; i < arr.length; i += 2) ctx.fillRect(arr[i], arr[i + 1], cellW, cellH);
+        }
+        // Painted river tiles at tiny zoom: an orange centre dot (the hex edge would be invisible here).
+        if (paintedRiverPts.length) {
+            const dot = Math.max(1, tileSize * 0.6), dotHalf = dot / 2;
+            ctx.fillStyle = PAINTED_RIVER_MARK;
+            for (let i = 0; i < paintedRiverPts.length; i += 2) ctx.fillRect(paintedRiverPts[i] - dotHalf, paintedRiverPts[i + 1] - dotHalf, dot, dot);
         }
         probe('PROBE_6_RIVERS');
         probe('PROBE_7_WONDERS');
@@ -345,6 +372,7 @@ function drawMinimap(canvas, snap, opts) {
                 let arr = colorBatches.get(col);
                 if (!arr) { arr = []; colorBatches.set(col, arr); }
                 arr.push(cx, cy);
+                if (isPaintedRiver(p)) paintedRiverPts.push(cx, cy);
             }
         }
         probe('PROBE_5_BATCH_FILL');
@@ -361,16 +389,21 @@ function drawMinimap(canvas, snap, opts) {
             if (n > 0) ctx.fill();
         }
         // 3) Rivers — at most 2 strokes total (one per class), each a single batched path.
+        //    2026-11-02: a navigable-river-TERRAIN hex is already a solid NAV_RIVER hex, so the RIVER_NAV line (same
+        //    blue, invisible there) is drawn only for navigable river DATA under other terrain — the legend's
+        //    "Navigable river (other terrain)" bar, e.g. a real river the user painted Flat over.
         const minorPts = [], navPts = [];
         for (let y = 0; y < H; y++) {
             const rowBase = y * W;
             for (let x = 0; x < W; x++) {
                 const p = snap.plots[rowBase + x];
                 if (!p || !p.river) continue;
+                if (p.river === 2 && p.terr === NAV_RIVER_TERRAIN) continue;
                 const { cx, cy } = plotCenter(x, y, H, tileSize);
                 (p.river === 2 ? navPts : minorPts).push(cx, cy);
             }
         }
+        navDataOnly = navPts.length / 2;
         const strokeRivers = (pts, color, wMul) => {
             if (!pts.length) return;
             ctx.strokeStyle = color;
@@ -385,6 +418,19 @@ function drawMinimap(canvas, snap, opts) {
         };
         strokeRivers(minorPts, RIVER_MINOR, 0.12);
         strokeRivers(navPts, RIVER_NAV, 0.18);
+        // 3b) Painted river tiles (navigable-river terrain, no river data): ONE batched orange inner hex edge,
+        //     chunked like the fills. Real navigable rivers (river === 2) stay plain blue.
+        if (paintedRiverPts.length) {
+            ctx.strokeStyle = PAINTED_RIVER_MARK;
+            ctx.lineWidth = Math.max(1, tileSize * 0.14);
+            let n = 0;
+            ctx.beginPath();
+            for (let i = 0; i < paintedRiverPts.length; i += 2) {
+                hexSubPath(ctx, paintedRiverPts[i], paintedRiverPts[i + 1], tileSize * 0.84);
+                if (++n >= FILL_CHUNK) { ctx.stroke(); ctx.beginPath(); n = 0; }
+            }
+            if (n > 0) ctx.stroke();
+        }
         probe('PROBE_6_RIVERS');
         // 4) Natural-wonder pips — fillRect (cheap) instead of one arc() per pip.
         const pip = Math.max(2, tileSize * 0.5), pipHalf = pip / 2;
@@ -525,6 +571,17 @@ function drawMinimap(canvas, snap, opts) {
         ctx.stroke();
     }
     probe('PROBE_11_SPOTLIGHT');
+
+    // Decision breadcrumb, only when it changes (redraws are frequent): how many painted river tiles got a mark, and which.
+    try {
+        const nPainted = paintedRiverPts.length / 2;
+        const k = nPainted + (cheap ? 'dot' : 'edge') + ':' + navDataOnly;
+        if (k !== _paintedRiverDrawKey) {
+            _paintedRiverDrawKey = k;
+            api.diag('map.draw.paintedRiver:n=' + nPainted + ',mark=' + (cheap ? 'dot' : 'edge') + ',zoom=' + tileSize
+                + ',navLineOtherTerrain=' + (navDataOnly < 0 ? 'off' : navDataOnly));
+        }
+    } catch (_) { /* diagnostics must never break the minimap */ }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
@@ -1125,6 +1182,13 @@ export function renderMapTab(container) {
         if (res) parts.push('Resource: <span style="color:' + colorForResource(res.cls) + ';">' + (res.name || strip(res.type, 'RESOURCE_')) + '</span>');
         if (p.river === 1) parts.push('Minor river');
         else if (p.river === 2) parts.push('Navigable river');
+        // River data under other terrain (e.g. Flat painted over a real river): the line on the minimap, still drawn in 3D.
+        if (p.river === 2 && p.terr !== NAV_RIVER_TERRAIN) parts.push('Navigable river under other terrain (the 3D map still draws the river)');
+        // Navigable-river terrain without the game's river data = a painted tile (the 3D map draws no river there).
+        if (isPaintedRiver(p)) {
+            parts.push('<span style="color:' + PAINTED_RIVER_MARK + ';">River terrain, but the game has '
+                + (p.river === 1 ? 'only a minor river' : 'no river') + ' here (painted)</span>');
+        }
         if (_state.filters.fog && _fogView && _fogView.states) {
             const fs = _fogView.states[loc.y * snap.width + loc.x];
             parts.push('Fog: ' + (fs === 0 ? 'unexplored' : fs === 2 ? 'in sight' : 'explored'));
@@ -1288,7 +1352,9 @@ export function renderMapTab(container) {
         sq('#f4d240') + 'Treasure',
         sq('#fcd040') + 'Wonder',
         bar('#7ec8e3') + 'Minor river',
-        bar('#4a90d0') + 'Navigable',
+        sq(NAV_RIVER) + 'Navigable river',
+        bar(RIVER_NAV) + 'Navigable river (other terrain)',
+        sqEdge(NAV_RIVER, PAINTED_RIVER_MARK) + 'Painted river',
         sq('#ccc') + 'City',
         tri('#ccc') + 'Unit',
     ];

@@ -13,10 +13,14 @@
  *   neighbour rules, the tiles around it) and places the wonder from the clicked anchor tile.
  *   Exit is the shared LcpPlotMode banner / Esc / right-click (Item 2). The "Recent paint results" list
  *   (above the type list) shows the last outcomes with their reasons (the paint banner shows them live).
- *   Type names are tagged when the data says they behave unusually: "Navigable River (experimental)",
+ *   Type names are tagged when the data says they behave unusually: "Navigable River (terrain only)" (2026-11-02: the
+ *   3D map draws rivers from river data that painting doesn't change, so a painted one is never drawn as a river),
  *   resources "(Distant Lands)" / "(special)" / "(other age)" (e.g. the two "Gold" entries differ this way).
  *   Each type's explanation shows in the status line when it is selected (and as data-tooltip-content, the
  *   attribute the base UI's tooltips read — the HTML title attribute is not shown by Gameface).
+ *   "Mark painted river tiles on the 3D map" (2026-11-02, default ON) switches the panel's own blue stand-in mark for
+ *   painted Navigable River tiles on the 3D map (api.js PAINTED-RIVER STAND-IN OVERLAY); the choice is kept in
+ *   localStorage under the shared 'modSettings' key (modSettings.localCheatPanel.paintedRiverOverlay).
  *
  * Module-level _state keeps the category/type selection across tab switches in a single session.
  */
@@ -56,8 +60,12 @@ export function renderCreativeTab(container, opts = {}) {
         + 'reason shows in the banner and under "Recent paint results". Terrain also fixes the biome on land/water changes and '
         + 'removes features that can\'t stay. Wonders reshape the clicked tile (and, for multi-tile wonders or neighbour rules, '
         + 'the tiles around it for a moment) and put everything back if the game refuses. "(Clear / remove feature)" on a wonder '
-        + 'removes the whole wonder. Esc / right-click / Exit leaves. If the 3D terrain does not redraw, save & reload shows it.';
+        + 'removes the whole wonder. Esc / right-click / Exit leaves. The 3D map does not redraw terrain right away: shape changes '
+        + '(mountain, hill, flat, water) are expected to show after a save & reload, but that is not guaranteed. Navigable River changes '
+        + 'the terrain only, so the 3D map never shows a river there (not even after a reload); paint Coast for water that boats can use.';
     container.appendChild(intro);
+    // Early reachability breadcrumb (typeof checks only): can this context see TerrainBuilder.setRiverInfo? Once per session.
+    try { api.logPaintApiOnce('creative-tab'); } catch (_) { /* diagnostics must never break the tab */ }
 
     const statusEl = document.createElement('div');
     statusEl.className = 'lcp-row-msg';
@@ -115,6 +123,9 @@ export function renderCreativeTab(container, opts = {}) {
     });
     container.appendChild(paintBtn);
 
+    // ═══ Painted-river marker on the 3D map (2026-11-02; default ON, kept in localStorage modSettings) ═══
+    renderPaintedRiverToggle(container);
+
     // ═══ Recent paint results (newest first; filled by api.paintPlotAsync while painting) ═══
     renderRecentResults(container);
 
@@ -158,6 +169,48 @@ export function renderCreativeTab(container, opts = {}) {
     populateTypes();
     updateStatus();
     api.LOG('rendered creative tab (category=' + _state.category + ')');
+}
+
+// "Mark painted river tiles on the 3D map: ON/OFF (n marked, m under fog)" + one help line. The marker itself (overlay
+// group, refresh triggers, persistence) lives in api.js (PAINTED-RIVER STAND-IN OVERLAY); this is only the switch. The
+// count is the last refresh's (a paint, the turn start or this toggle redraws it); the tab re-renders on every open.
+function renderPaintedRiverToggle(container) {
+    const btn = document.createElement('button');
+    btn.className = 'lcp-toggle-btn';
+    btn.style.marginBottom = '0.15rem';
+    const help = document.createElement('div');
+    help.style.cssText = 'font-size:0.7rem; color:#8a7c5c; margin-bottom:0.4rem; line-height:1.35;';
+    // Names the surface (2026-11-02): this switch drives only the 3D-world overlay; the Map tab marks painted tiles always.
+    help.textContent = 'Blue tint on the game\'s 3D map over tiles you painted as Navigable River (the game does not draw them as rivers). '
+        + 'The panel\'s Map tab always marks them, whatever this switch says.';
+    const show = (st) => {
+        let on = true;
+        try { on = api.isPaintedRiverOverlayEnabled(); } catch (_) {}
+        let tail = '';
+        if (on && st && st.at !== 0) {
+            if (st.ok === false && st.why && !/^(no-map|fog-not-ready|no-local-player)$/.test(st.why)) tail = ' (could not draw the marks, see UI.log)';
+            else if (st.ok) tail = ' (' + (st.count | 0) + ' marked' + (st.hidden ? ', ' + st.hidden + ' not explored yet' : '') + ')';
+        }
+        btn.textContent = 'Mark painted river tiles on the 3D map: ' + (on ? 'ON' : 'OFF') + tail;
+        btn.classList.toggle('active', on);
+    };
+    btn.addEventListener('click', () => {
+        let on = true;
+        try { on = api.isPaintedRiverOverlayEnabled(); } catch (_) {}
+        api.LOG('creative: painted-river marker toggle -> ' + (on ? 'OFF' : 'ON'));
+        try { api.diag('creative.riverMark.toggle:on=' + (on ? 0 : 1) + ',surface=3d,mapTabAlwaysMarks=1'); } catch (_) { /* never break the toggle */ }
+        let r = null;
+        try { r = api.setPaintedRiverOverlayEnabled(!on, 'creative-tab'); } catch (e) { api.ERR('setPaintedRiverOverlayEnabled failed:', e); }
+        let st = null;
+        try { st = api.getPaintedRiverOverlayState(); } catch (_) {}
+        show(st || r);
+        if (r && !r.persisted) api.LOG('creative: marker setting kept for this session only (localStorage did not take it)');
+    });
+    let st0 = null;
+    try { st0 = api.getPaintedRiverOverlayState(); } catch (_) {}
+    show(st0);
+    container.appendChild(btn);
+    container.appendChild(help);
 }
 
 // Last few paint outcomes with their reasons, newest first (api keeps up to 8; the tab shows 5).
