@@ -1,6 +1,104 @@
 # Local Cheat Panel — Build Status & Handoff
 
-_Last updated: 2026-10-14. Read this first to resume work._
+_Last updated: 2026-11-09. Read this first to resume work._
+
+## ▶ 2026-11-09: rounds committed, public v4 built, release from the Windows VM
+
+- **Branches.** `master` (pushed to GitHub) = everything proven in game, through the 2026-11-03 river writer, one
+  commit per round. `dev` (local only) = master + the 2026-11-05 wonders round below, which is not proven yet. The
+  working tree sits on `dev`, so the game (symlink `Mods/local-cheat-panel` → `src/`) loads the same files as before.
+- **What is released / proven / in development:** `docs/feature-ledger.md`.
+- **Public v4** (`dist-workshop/`, tracked in git since today) = the 2026-11-02 round (`c5f2c94`) with the public
+  claim, the released v3 modinfo and text (version 3 → 4). Rebuild: `scripts/build-workshop.sh c5f2c94`.
+  The old untracked `dist-workshop` (v2, dev branding, no criteria) is in
+  `/Users/sd/Civ7/_staging/2026-11-09-release/dist-workshop-v2-old/`.
+- **Release:** from the VM clone `C:\civ7\cheat-panel` with the SDK Workshop Uploader. Steps, pre-release test and
+  update notes: `docs/workshop-publishing.md` and `docs/release/v4-update-notes.md`.
+
+## ▶ Current round (2026-11-05): natural-wonder remover + waterfall wonders that render
+
+**Not committed.** It sits on top of the uncommitted 2026-10-21 package, the 2026-11-02 round and the 2026-11-03 river writer (below). Staging: `/Users/sd/Civ7/_staging/2026-11-05-wonders/` (`before/` = src before the round, `work/` = after; `tools-before/` / `tools/` the same for `scripts/river-writer/`; `SPEC.md` = the contract). To revert: copy `before/ui` over `src/ui` and the three files of `tools-before/` over `scripts/river-writer/`. Panel: JS only, modinfo byte-identical → **Reload UI** is enough for the panel. The watcher's Python change takes effect when the watcher restarts (next game launch via the LaunchAgent); the payload hot-reloads.
+
+**Verified live first (2026-11-05, save good2; memory `waterfall-wonder-render-rule`):**
+- **Iguazú Falls / Gullfoss draw** when the falls tile F holds a MINOR river with outflow d into a navigable river T=adj(F,d), fed from U=adj(F,d+3). **No cliff is needed** (seen at 68,62 after save & load). The game's `canHaveFeatureParam` still says false for them; the panel skips it for waterfalls.
+- **Removal:** `WorldBuilder.MapPlots.setFeature(-1,{x,y})` from the UI removes a whole natural wonder (Redwood: 3 tiles in one call), and it disappears from the map at once (user: "removal worked"). Ground and rivers stay.
+- The wonders removed during the probes (Gullfoss, Redwood) were put back exactly. Test falls left in the save: Iguazú at 68,62 and Gullfoss at 68,72.
+
+| Piece | Where | State |
+|---|---|---|
+| **Wonder → (Remove natural wonder)**: first entry of the Wonder list. Removes every tile of the wonder under the cursor; refuses on a tile without a natural wonder ("No natural wonder on X,Y."). Shares the code with Feature → (Clear / remove feature) on a wonder tile. After it lands, it drops any queued waterfall river (`wf`) on those tiles. Fixed copy that wrongly claimed the game can't remove wonders from the UI. | api.js (`REMOVE_WONDER`, `paintPlanWonderOff`, `removeWonderAsync`, `rwQueueDrop`), tab-creative.js, paint-tile-mode.js | 🟡 headless-tested, removal path itself ✅ live (probe) |
+| **Waterfall placement**: placing Iguazú Falls / Gullfoss first picks a direction (`paintWaterfallPlan`: T navigable, U dry land, not a mountain/water/wonder; ranks dry sides, avoids uphill game rivers and tiles that feed other falls), refuses before any write when none fits, then places the wonder and queues `wf:X:Y:D` for the river writer. The message names U → falls → T and says the falls draw after the writer has run and a save & load. | api.js, tab-map.js (hover lines) | 🟡 headless-tested, **LIVE-UNVERIFIED** |
+| **River writer `wf` job** (payload STEP 7/7, after navigable writes and lake sources): re-checks F/U/T in ctx 1, joins T with the same loop-safety rules as navigable rivers, writes F→T then U→F (RIVER_MINOR), reads both back. Codes: ok, wf-off-map, wf-f-blocked, wf-u-blocked, wf-no-nav, wf-t-pending, wf-t-unsafe, wf-max-writes, wf-no-falls, wf-feeds-falls, wf-readback:…. Watcher prints one line per job and copies `wf`/`wfN` into `LCP_RW_LAST`. | `scripts/river-writer/` | 🟡 headless-tested, **LIVE-UNVERIFIED** |
+
+Headless: `bash /Users/sd/Civ7/_staging/2026-11-05-wonders/tests/run-river-writer.sh` → PASS (payload-unit 16, watch-e2e 22, panel-rw 10, panel-watcher 3, panel-fixes 15, panel-wonders 26, panel-wonders-e2e 9, builder-payload 55, builder-e2e 18, wf-payload 31, wf-e2e 7, run-river-round all checks). Review: 3 lenses, 11 findings, 10 confirmed after adversarial verification and fixed (stale `wf` entry after removal, uphill game river, status headline, removal fail text, post-load caveat, falls feeding falls, deploy order), 1 refuted.
+
+**Still INFERRED (needs the game):** `GameplayMap.isNaturalWonder` in the Tuner context (the map-gen scripts use it; if missing, the payload skips the wf-no-falls / wf-feeds-falls checks and logs `falls=unknown`); `isCliffCrossing` / `isNavigableRiver` in the UI context (guarded; only scoring uses them).
+
+### Test (Reload UI; the watcher is started by the game launch)
+1. Wonder → **(Remove natural wonder)** → click a tile of any wonder → it disappears at once. Click a plain tile → "No natural wonder on X,Y."
+2. Wonder → **Iguazú Falls** → click a dry land tile right next to a navigable river (the river not uphill of it). The message names "U → falls → T". The watcher log shows `waterfall river at …: ok` within a few seconds.
+3. Click Iguazú on a tile with no navigable river next to it → refused, nothing changes.
+4. Save under a new name, load → the waterfall draws.
+5. Send `~/Library/Logs/lcp-river-writer.log` (or the `.out.log`) if anything is off.
+
+---
+
+## ▶ (prior) Round (2026-11-03): river writer (real rivers from paint) + minor-river remover
+
+**Not committed.** It sits on top of the uncommitted 2026-10-21 package and the 2026-11-02 round (below). Pre-round copy: `/Users/sd/Civ7/_staging/2026-11-03-river-writer/before/`; post-round: `work/` (SHA1SUMS-work) and `tools/` (SHA1SUMS-tools); patch: `round-2026-11-03-river-writer.patch`. To revert the panel side, copy `before/ui` over `src/ui` and delete `scripts/river-writer/`. Panel: JS only, modinfo byte-identical, so a **Reload UI** (or a fresh launch) is enough.
+
+**Why a watcher (verified 2026-11-03, binary RE + live tuner probes; see memory `tuner-context-only-terrainbuilder`):** during play the only script context with `TerrainBuilder.setRiverInfo` is the FireTuner **Tuner context** (ctx 1, needs `EnableTuner 1`). The UI context has no TerrainBuilder, and ScenarioScripts never load on 1.5.0. Writes from ctx 1 are real but post no event, so the river shows only after a **save & load** (seen 3× live: 60/64+60/65, 62/61). `setRiverInfo(x,y,-1,-1)` removes a river. On a lake plot it only sets the target's inflow (a lake source).
+
+| Piece | Where | State |
+|---|---|---|
+| **Watcher** `river_watch.py` (python3 stdlib, `python3 -I`): polls ctx 65535 every 2 s (heartbeat globals `__lcpRiverWriter` / `__lcpRiverWriterSt`, no config write per poll), runs a cycle when `LCP_RWQ` has entries or once per fresh Tuner context (game load / watcher start): UI preflight → payload in ctx 1 → one UI write-back (`LCP_RW_LAST`, `LCP_RW_STATE`, queue consumed). Idles with backoff when the port is closed or not in a match. Flags `--once --dry-run --no-lake-source --max-writes -v`. Pid lock + JSONL log in `~/Library/Logs/lcp-river-writer.{pid,log}` (the game wipes its own Logs folder at launch), rotated at 5 MB. | `scripts/river-writer/` | 🟡 headless-tested, **LIVE-UNVERIFIED** |
+| **Payload** `river-writer-payload.js` (plain Tuner-context JS, ~34 KB as sent): removals (refused on water / mountain / navigable-river terrain), candidates = navigable-river terrain without navigable data, mouths ranked sea > the writer's own or a game river > lake, BFS tree (no loops), read-back after every write, lake source when the river drains straight to the sea (or to a writer river that ends elsewhere). Fail-closed rules: water/lakes that still hold river data are never mouths; mountains never targets; minor rivers never joined; untraceable rivers next to a lake block lake links through it. Authoritative state copy kept in the Tuner context too. | `scripts/river-writer/` | 🟡 headless-tested, **LIVE-UNVERIFIED** |
+| **Panel:** a Navigable River paint queues `n:X:Y:W` in `LCP_RWQ` (guardSP, cap 120 / 2500 chars); new **River > Remove river (queued)** queues `rm:X:Y`; Creative "River writer" status line (running / not running + start command / unknown), refreshing every 2 s; notes for queued / written-awaiting-save&load / pending / refused / failed; overlay green edge on written-but-unconfirmed tiles; Map-tab hover lines; copy never claims a river before a save & load; repaint/undo copy names Remove river once the writer has written a tile. | api.js (RIVER WRITER), tab-creative.js, tab-map.js, paint-tile-mode.js | 🟡 headless-tested, **LIVE-UNVERIFIED** |
+
+**2026-11-04 live:** ✅ the user confirmed "it works": queued minor-river removals (62/60, 62/61, 63/62) applied and verified in game data; river painting works after save & load. Bug found live and fixed: the game's `DirectionTypes` keys are `DIRECTION_NORTHEAST` … `DIRECTION_NORTHWEST` (values 0–5 as expected); the payload checked unprefixed names and refused (fail-closed, nothing written). The payload now accepts both, and the test fakes use the live names.
+
+**Auto-start (2026-11-04):** LaunchAgent `local.lcp.river-writer` (`scripts/river-writer/install-launch-agent.sh`, undo `uninstall-launch-agent.sh`). Trigger: `WatchPaths` on `AppOptions.txt`, which the game rewrites at every launch (launch 11:34:59 → file 11:35:00), plus RunAtLoad. It runs `river-writer-agent.sh` → `river_watch.py --with-game` (waits ≤30 s for the game process, exits 0 once the port is closed and the process has been gone 10 s; a lock held by another watcher → exit 0). `KeepAlive {SuccessfulExit:false}` restarts only after a crash. Output `~/Library/Logs/lcp-river-writer.out.log`. ✅ Installed and running in the user's match (pid 34155, heartbeat seen). ⏳ Not yet seen live: the exit when the game quits and the start at the next launch.
+
+Headless: `bash /Users/sd/Civ7/_staging/2026-11-03-river-writer/tests/run-river-writer.sh` → PASS (2026-11-04: builder-e2e 18 with the 4 `--with-game` tests) (payload-unit 16, watch-e2e 22 with the real watcher against a fake tuner server, panel-rw 10, panel-watcher 3, panel-fixes 15, builder-payload 55, builder-e2e 14, plus run-river-round.sh all checks). Reviewer fuzzers on the final payload: ~109k random sessions, 0 loops / 0 writes into minor rivers, mountains or stale water. Reviews: build review (7 confirmed, fixed), an independent final review (6 confirmed: stale-water sink loops, lake-source loops, undo copy, repaint-after-removal, late paints, log location; all fixed and verified), then two further lake cases closed in the main session (a lake with river data on any tile; a lake touched by an untraceable river). Known limits: `scripts/river-writer/README.md` "Known limits".
+
+**Still unknown (needs the game):** whether the tuner's ctx-65535 `globalThis` is the panel module's realm (if not, the status line says "unknown" but writes still work); whether real lake tiles ever hold river data (the dry run's `lake-river-data` skips would show it); the 62/61 lake-source + 62/60 minor-removal render (hand-written 2026-11-03, awaiting the user's save & load).
+
+### Test (fresh launch, so no Reload UI needed; save under a new name first)
+1. Load the save with 62/61. Check: does the river run lake 61/61 → 62/61 → ocean 63/61, and is the 62/60 minor river gone?
+2. Terminal: `python3 -I ~/Civ7/cheat-panel/scripts/river-writer/river_watch.py --once --dry-run` → prints the plan, writes nothing.
+3. Terminal: `python3 -I ~/Civ7/cheat-panel/scripts/river-writer/river_watch.py` (leave it open). Creative tab → "River writer: running".
+4. Paint Navigable River on a land tile next to the sea → Terminal shows a write within ~2 s; the tile gets a green edge.
+5. River → Remove river (queued) on a minor river (e.g. the 63/62 stub) → Terminal shows the removal.
+6. Save under a new name, load → the painted river is drawn and linked to the sea; the stub is gone. Send the Terminal output and `~/Library/Logs/lcp-river-writer.log`.
+
+---
+
+## ▶ (prior) Round (2026-11-02): "navigable rivers get placed but the UI doesn't change"
+
+**Not committed.** It sits on top of the uncommitted 2026-10-21 package (same 6 files). Pre-round copy: `/Users/sd/Civ7/_staging/2026-11-02-river/before/`. Post-round copy: `after/` (SHA1SUMS). Patch: `round-2026-11-02-river.patch`. To revert this round only, copy `before/ui` over `src/ui`. JS only (no modinfo, database or text change), so a **Reload UI** is enough.
+
+**Why the 3D map can't show it (verified by binary RE, build 25516395 / engine 1311346; details in `_staging/2026-11-02-river/investigation.json`):** `WorldBuilder.MapPlots.setTerrain` writes only the terrain field. Rivers are drawn from separate river data (the plot's river nibble), and setTerrain never writes it. The terrain-visual classifier has no navigable-river case. The in-game 3D view also does not listen to TerrainTypeChanged / River* events (it listens to BiomeTypeChanged / TerrainStateChanged / Feature* / Resource*), so terrain changes are not redrawn live. So a painted navigable river is never drawn as a river, live or after save & reload. The only river-data writer is `TerrainBuilder.setRiverInfo`; whether the panel's context can reach it is **unprobed** (breadcrumb added this round). Ruled out: WorldBuilder mode, debug "Rebuild Terrain Cache", water-quality toggle.
+
+| Change | Files | State |
+|---|---|---|
+| **Map tab minimap fix:** navigable-river terrain was drawn in its biome colour (its fill was nested under `p.water`, but that terrain has no Water attribute). It is now blue. Painted tiles (that terrain with no river data) get an orange edge/dot, a legend chip and a tooltip line. The navigable-river line is drawn only for river data under other terrain. | tab-map.js, api.js (getMapSnapshot counts) | 🟡 headless-tested |
+| **Honest copy:** the river warning, per-case river result notes (fixes "no river here (river type: minor)"), paint-mode note per category, and Creative intro. No more "save & reload redraws it"; names the old terrain to paint back instead of "Flat to undo". Label "(experimental)" → "(terrain only)". | api.js, paint-tile-mode.js, tab-creative.js | 🟡 headless-tested |
+| **3D stand-in marker:** `refreshPaintedRiverOverlay`, its own WorldUI overlay group (`LcpPaintedRiverOverlayGroup`, priority 1), blue fill + orange edge on explored painted-river tiles. Data-derived; refreshes on every paint, at load (whenReady+2 s, retried), on turn start, TerrainTypeChanged, PlotVisibilityChanged and the toggle; cleared on BeforeUnload. Creative toggle "Mark painted river tiles on the 3D map" (default ON), stored in `localStorage` `modSettings.localCheatPanel.paintedRiverOverlay`. | api.js, tab-creative.js, paint-tile-mode.js | 🟡 **LIVE-UNVERIFIED** (does it draw / persist across turns and panel close?) |
+| **Diagnostics:** `paint.api` now logged early (paint-tile-mode load + Creative tab) with `ctx/inst/href` and `tb.setRiverInfo/finalizeRivers/storeWaterData/validateAndFixTerrain`, `ab.recalculateAreas` typeof (nothing is called). Event probe adds RiverAdded/RemovedFromMap, TerrainStateChanged, TerrainSubTypeChanged, WorldBuilderBlockEnd. New: `paint.river.case/.tail`, `paint.mode.enter`, `paint.overlay*`, `settings.set`, `map.navriver`, `map.draw.paintedRiver`, `creative.riverMark.toggle`. `diagInit(doc)` moves the sink to the caller's document if module-load breadcrumbs created it elsewhere (`diag.sink:rehomed=1`). | api.js | 🟡 headless-tested |
+
+Headless: `bash /Users/sd/Civ7/_staging/2026-11-02-river/tests/run-river-round.sh`, all checks passed (170 pass, 6 skipped by design). Review: 3 lenses × skeptic; 3 confirmed findings fixed (the "Flat to undo" promise, the ambiguous "map" in the toggle label, the navigable-river legend line), plus the tester's overlay-group retry leak.
+
+### Test (Reload UI; use a throwaway save)
+1. Creative → Terrain → **Navigable River (terrain only)** → Paint → click 2 land tiles (one Flat, one forested). Expect an orange flash and a note: "the game has no river here … to remove the river terrain, paint Flat back (that does not bring back the removed Forest)".
+2. On the 3D map, both tiles get a **blue tint with an orange edge** (the stand-in marker; the terrain itself won't change). Close the panel, end a turn: the tint stays.
+3. Creative → toggle "Mark painted river tiles on the 3D map" OFF (tint goes away), then ON (comes back).
+4. Map tab: the two tiles are blue with an orange edge; hover shows "River terrain, but the game has no river here (painted)". Real navigable rivers are now blue too.
+5. Optional: save, reload the save. The tint returns ~2 s after load.
+6. Send UI.log. Look for `paint.api:ctx=paint-tile-mode-load,…tb.setRiverInfo=…`, `paint.overlay:…count=2`, `paint.event:hooked=13/13`, `paint.river.case`.
+
+**Next, if `tb.setRiverInfo=function`:** probe `TerrainBuilder.setRiverInfo` on a throwaway save (the investigation's candidate #4; high risk, skips ocean/mountain, posts no event, so it would still need a save & reload to show).
+
+---
 
 ## ▶ Current round (2026-10-14): game updated to build 25516395; Creative paint (and City claim) clicks do nothing
 
@@ -18,6 +116,8 @@ Static checks on 25516395: the WorldBuilder `MapPlots.set{Terrain,Biome,Feature,
 4. Cities → a city → **Claim** → click a tile → it joins the city.
 
 ### sam-cheat-panel Workshop twin (prepared, awaiting local test pass)
+**⚠ 2026-10-20: MOVED OUT of the Mods folder to `/Users/sd/Civ7/cheat-panel/dist-workshop/`. Do not put it back in `Mods/`.** As a real folder in `Mods/` it carried the same mod id as the subscribed Workshop item 3736063097. The game's scan then registered it with no action groups and wrote its `ui/cheat-panel/cheat-panel.js` into legendary-map's `game-legendary-map` UpdateDatabase (Mods.sqlite ActionItems rowid 26116), so every new game rolled back to vanilla and dropped to the main menu. Fixed with the game closed: row deleted, local-cheat-panel re-enabled, duplicate row 147 disabled; backup `mod-fixing/_backups/Mods.sqlite.2026-10-20-before-row26116-fix`. A smoke test of this copy needs the Workshop subscription removed first (or a different mod id). **Root cause found later (Oct 19 Modding.log in `Dumps/DCF347F000D9441516`): both `<ActionGroup>`s in this copy have no `criteria` attribute, so the ActionGroups insert failed (FOREIGN KEY, CriteriaRowId 0) and the next inserts landed on legendary-map's row. Before any Workshop upload: add `criteria="always"` (with an AlwaysMet criterion) to both groups and bump the version to 4 or higher (published is 3; this copy is 2).**
+
 **2026-10-18:** The public Workshop copy has been prepared at `~/Library/Application Support/Civilization VII/Mods/sam-cheat-panel/` with:
 - ✅ InputHandlerState fix copied (`lcp-plot-mode-base.js`, `imports.js`)
 - ✅ Territory cheat removed (`api.js` uses only `city.purchasePlot`, not `WorldBuilder.MapPlots.setOwnership`)

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Collision-proof against the public Workshop twin sam-cheat-panel, which ships the SAME rows.
+  A plain <Row> insert of a second copy fails "UNIQUE constraint failed: InputActions.ActionId" and the engine
+  ROLLS BACK THE WHOLE SHELL/CONFIG DATABASE — which silently breaks OTHER mods' setup content (e.g. supercolors'
+  setup parameters + jersey picker) whenever both panels are in the same configuration pass (verified
+  2026-09-14, Modding.log/Database.log 9/9 correlation). This group runs at LoadOrder 50 (after the twin's 0):
+   - InputActions: InsertOrIgnore → our copy is a no-op if the twin already inserted it.
+   - InputActionDefaultGestures: its PK contains the nullable ContextOverrideId, so a duplicate never raises
+     UNIQUE — it would silently add a SECOND F8 gesture. Delete-then-Row keeps exactly one.
+  Caveat: OR IGNORE also swallows NOT NULL / PK violations, so a future bad edit here fails silently — the
+  tripwire is the UI.log line "LCP: F8 wiring — input-action row PRESENT".
+-->
+<Database>
+    <InputActions>
+        <InsertOrIgnore ActionId="lcp-open-panel" DeviceType="Keyboard" Name="LOC_LCP_CHEAT_PANEL_OPEN_PANEL" Description="LOC_LCP_CHEAT_PANEL_OPEN_PANEL" />
+    </InputActions>
+    <InputActionDefaultGestures>
+        <Delete ActionId="lcp-open-panel" />
+        <Row ActionId="lcp-open-panel" Index="0" GestureType="KBMouse" GestureData="KEY_F8" />
+    </InputActionDefaultGestures>
+</Database>

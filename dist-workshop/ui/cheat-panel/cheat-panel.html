@@ -1,0 +1,89 @@
+<fxs-subsystem-frame class="cheat-frame items-center grow pointer-events-auto" tabindex="-1"
+					 backDrop="fs://game/pant_altarbg.png">
+
+	<fxs-header class="tracking-150 justify-center flex h-16 w-96" title="LOC_LCP_CHEAT_PANEL_HEADER"
+				data-slot="header"></fxs-header>
+
+	<fxs-tab-bar class="cheat-tab-bar w-full mt-1" tab-style="flat" tab-for="" selected-tab-index="0"
+				 data-slot="header"
+				 tab-items='[{"id":"player","label":"LOC_LCP_CHEAT_TAB_PLAYER"},{"id":"units","label":"LOC_LCP_CHEAT_TAB_UNITS"},{"id":"cities","label":"LOC_LCP_CHEAT_TAB_CITIES"},{"id":"map","label":"LOC_LCP_CHEAT_TAB_MAP"},{"id":"creative","label":"LOC_LCP_CHEAT_TAB_CREATIVE"},{"id":"research","label":"LOC_LCP_CHEAT_TAB_RESEARCH"}]'></fxs-tab-bar>
+
+	<!-- PLAYER tab -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-player flex flex-col items-stretch w-full px-3 py-4">
+		<div class="cheat-section-divider font-title text-accent-2 text-center mt-1 mb-1 text-sm" data-l10n-id="LOC_LCP_CHEAT_BTN_ADD_GOLD"></div>
+		<div class="flex flex-row items-center my-1 w-full">
+			<fxs-button class="cheat-add-gold-1 flex-auto mr-1" caption="LOC_LCP_CHEAT_GOLD_1"></fxs-button>
+			<fxs-button class="cheat-add-gold-2 flex-auto mr-1" caption="LOC_LCP_CHEAT_GOLD_2"></fxs-button>
+			<fxs-button class="cheat-add-gold-3 flex-auto" caption="LOC_LCP_CHEAT_GOLD_3"></fxs-button>
+		</div>
+		<div class="flex flex-row items-center my-1 w-full">
+			<fxs-stepper class="cheat-stepper-influence mr-3" min-value="0" max-value="4" value="1"
+						 captions-list='["+100","+500","+1000","+5000","+10000"]'></fxs-stepper>
+			<fxs-button class="cheat-add-influence flex-auto" caption="LOC_LCP_CHEAT_BTN_ADD_INFLUENCE"></fxs-button>
+		</div>
+		<div class="flex flex-row items-center my-1 w-full">
+			<fxs-stepper class="cheat-stepper-attr mr-3" min-value="0" max-value="4" value="0"
+						 captions-list='["+1","+5","+10","+25","+50"]'></fxs-stepper>
+			<fxs-button class="cheat-add-attr flex-auto" caption="LOC_LCP_CHEAT_BTN_ADD_ATTR"></fxs-button>
+		</div>
+	</fxs-inner-frame>
+
+	<!-- UNITS tab -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-units flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<button class="cheat-inf-move lcp-toggle-btn my-1"></button>
+		<fxs-button class="cheat-restore-move-sel my-1" caption="LOC_LCP_CHEAT_BTN_RESTORE_MOVE_SEL"></fxs-button>
+		<fxs-button class="cheat-heal-sel my-1" caption="LOC_LCP_CHEAT_BTN_HEAL_SEL"></fxs-button>
+		<div class="flex flex-row items-center my-1 w-full">
+			<fxs-stepper class="cheat-stepper-exp mr-3" min-value="0" max-value="4" value="0"
+						 captions-list='["+20","+50","+100","+200","+500"]'></fxs-stepper>
+			<fxs-button class="cheat-give-exp flex-auto" caption="LOC_LCP_CHEAT_BTN_GIVE_EXP"></fxs-button>
+		</div>
+		<fxs-button class="cheat-dup-sel my-1" caption="LOC_LCP_CHEAT_BTN_DUP_SEL"></fxs-button>
+		<div class="cheat-section-divider font-title text-accent-2 text-center mt-3 mb-1 text-sm" data-l10n-id="LOC_LCP_CHEAT_SECTION_BULK"></div>
+		<fxs-button class="cheat-restore-move-all my-1" caption="LOC_LCP_CHEAT_BTN_RESTORE_MOVE_ALL"></fxs-button>
+		<fxs-button class="cheat-heal-all my-1" caption="LOC_LCP_CHEAT_BTN_HEAL_ALL"></fxs-button>
+
+		<div class="flex flex-row items-center justify-between mt-3 mb-1">
+			<div class="cheat-section-divider font-title text-accent-2 text-sm" data-l10n-id="LOC_LCP_CHEAT_SECTION_UNIT_LIST"></div>
+			<fxs-button class="cheat-refresh-units" caption="LOC_LCP_CHEAT_BTN_REFRESH"></fxs-button>
+		</div>
+		<div class="cheat-unit-list"></div>
+	</fxs-inner-frame>
+
+	<!-- CITIES tab -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-cities flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<fxs-button class="cheat-complete-prod-sel my-1" caption="LOC_LCP_CHEAT_BTN_COMPLETE_PROD_SEL"></fxs-button>
+		<div class="flex flex-row items-center my-1 w-full">
+			<fxs-stepper class="cheat-stepper-pop mr-3" min-value="0" max-value="4" value="0"
+						 captions-list='["+1","+2","+5","+10","+20"]'></fxs-stepper>
+			<fxs-button class="cheat-add-pop-sel flex-auto" caption="LOC_LCP_CHEAT_BTN_ADD_POP_SEL"></fxs-button>
+		</div>
+		<div class="cheat-section-divider font-title text-accent-2 text-center mt-3 mb-1 text-sm" data-l10n-id="LOC_LCP_CHEAT_SECTION_BULK"></div>
+		<fxs-button class="cheat-complete-prod-all my-1" caption="LOC_LCP_CHEAT_BTN_COMPLETE_PROD_ALL"></fxs-button>
+		<fxs-button class="cheat-add-pop-all my-1" caption="LOC_LCP_CHEAT_BTN_ADD_POP_ALL"></fxs-button>
+
+		<div class="flex flex-row items-center justify-between mt-3 mb-1">
+			<div class="cheat-section-divider font-title text-accent-2 text-sm" data-l10n-id="LOC_LCP_CHEAT_SECTION_CITY_LIST"></div>
+			<fxs-button class="cheat-refresh-cities" caption="LOC_LCP_CHEAT_BTN_REFRESH"></fxs-button>
+		</div>
+		<div class="cheat-city-list"></div>
+	</fxs-inner-frame>
+
+	<!-- MAP tab: read-only Map Preview minimap. The whole tab body is populated by tab-map.js
+	     (renderMapTab) — same pattern as the Units / Cities per-row lists. -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-map flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<div class="cheat-map-content"></div>
+	</fxs-inner-frame>
+
+	<!-- CREATIVE tab (M8): world-editing tools (Map Paint). Body populated by tab-creative.js. -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-creative flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<div class="cheat-creative-content"></div>
+	</fxs-inner-frame>
+
+	<!-- RESEARCH tab -->
+	<fxs-inner-frame class="cheat-tab cheat-tab-research flex flex-col items-stretch w-full px-3 py-4 hidden">
+		<fxs-button class="cheat-complete-research my-1" caption="LOC_LCP_CHEAT_BTN_COMPLETE_RESEARCH"></fxs-button>
+		<fxs-button class="cheat-complete-civic my-1" caption="LOC_LCP_CHEAT_BTN_COMPLETE_CIVIC"></fxs-button>
+	</fxs-inner-frame>
+
+</fxs-subsystem-frame>

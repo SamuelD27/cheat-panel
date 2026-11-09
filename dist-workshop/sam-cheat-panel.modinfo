@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Mod id="sam-cheat-panel" version="4" xmlns="ModInfo">
+	<Properties>
+		<Name>ALL MIGHTY SAM'S POWERS</Name>
+		<Description>Solo-play sandbox/cheat panel for Civilization VII. Press F8 in-game to open. Single-player only.</Description>
+		<Authors>ALL MIGHTY SAM</Authors>
+		<Package>Mod</Package>
+		<AffectsSavedGames>0</AffectsSavedGames>
+		<EnabledByDefault>1</EnabledByDefault>
+	</Properties>
+	<Dependencies>
+		<Mod id="base-standard" title="LOC_MODULE_BASE_STANDARD_NAME" />
+	</Dependencies>
+	<ActionCriteria>
+		<Criteria id="always">
+			<AlwaysMet></AlwaysMet>
+		</Criteria>
+	</ActionCriteria>
+	<ActionGroups>
+		<ActionGroup id="shell-local-cheat-panel" scope="shell" criteria="always">
+			<Actions>
+				<UpdateDatabase>
+					<Item>database/input.xml</Item>
+				</UpdateDatabase>
+			</Actions>
+		</ActionGroup>
+		<ActionGroup id="game-local-cheat-panel" scope="game" criteria="always">
+			<Actions>
+				<!-- DO NOT register database/input.xml here (game scope). input.xml defines rows in
+				     InputActions / InputActionDefaultGestures, which exist only in the FRONT-END
+				     (shell) input database — NOT the gameplay database. A game-scope <UpdateDatabase>
+				     on it fails to load and the engine then performs a COMPLETE rollback to vanilla,
+				     so NO save can be loaded while this mod is enabled. The F8 binding therefore lives
+				     ONLY in the shell-scope group above; in-game, open the panel with the dock skull
+				     button. -->
+				<UpdateDatabase>
+					<!-- Registers INTERFACEMODE_LCP_CLAIM_TILE in the gameplay InterfaceModes table so
+					     InterfaceMode.switchTo accepts it. InterfaceModes IS a gameplay-scope table, so
+					     this is safe. -->
+					<Item>database/interface-modes.xml</Item>
+				</UpdateDatabase>
+				<UpdateText>
+					<Item>text/Cheat-Panel-Text.sql</Item>
+				</UpdateText>
+				<UIScripts>
+					<Item>ui/sub-system-dock/lcp-sub-system-dock.js</Item>
+					<Item>ui/cheat-panel/cheat-panel.js</Item>
+				</UIScripts>
+				<ImportFiles>
+					<Item>ui/cheat-panel/cheat-panel.html</Item>
+					<Item>ui/cheat-panel/shared/imports.js</Item>
+					<Item>ui/cheat-panel/shared/api.js</Item>
+					<Item>ui/cheat-panel/shared/infinite-move.js</Item>
+					<Item>ui/cheat-panel/tab-units.js</Item>
+					<Item>ui/cheat-panel/tab-cities.js</Item>
+					<Item>ui/cheat-panel/tab-map.js</Item>
+					<Item>ui/cheat-panel/tab-creative.js</Item>
+					<Item>ui/cheat-panel/lcp-plot-mode-base.js</Item>
+					<Item>ui/cheat-panel/claim-tile-mode.js</Item>
+					<Item>ui/cheat-panel/paint-tile-mode.js</Item>
+				</ImportFiles>
+			</Actions>
+		</ActionGroup>
+	</ActionGroups>
+	<LocalizedText>
+		<File>text/en_us/ModuleText.xml</File>
+	</LocalizedText>
+</Mod>

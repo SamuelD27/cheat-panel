@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Database>
+	<EnglishText>
+		<Row Tag="LOC_LCP_NAME">
+			<Text>ALL MIGHTY SAM'S POWERS</Text>
+		</Row>
+		<Row Tag="LOC_LCP_DESCRIPTION">
+			<Text>Solo-play sandbox/cheat panel for Civilization VII. Press F8 in-game to open. Single-player only.</Text>
+		</Row>
+		<!-- Referenced by database/input.xml (the F8 InputAction Name/Description) AND the dock
+		     button tooltip. Defined here in the globally-loaded LocalizedText file so it resolves in
+		     BOTH shell (front-end) and game scope — a game-scope-only definition left the front-end
+		     with a dangling reference. -->
+		<Row Tag="LOC_LCP_CHEAT_PANEL_OPEN_PANEL">
+			<Text>Open ALL MIGHTY SAM'S POWERS</Text>
+		</Row>
+		<Row Tag="LOC_LCP_OPEN_PANEL">
+			<Text>Open ALL MIGHTY SAM'S POWERS</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_PANEL_HEADER">
+			<Text>ALL MIGHTY SAM'S POWERS</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_1">
+			<Text>[icon:YIELD_GOLD] +10,000</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_2">
+			<Text>[icon:YIELD_GOLD] +100,000</Text>
+		</Row>
+		<Row Tag="LOC_LCP_CHEAT_GOLD_3">
+			<Text>[icon:YIELD_GOLD] +1,000,000</Text>
+		</Row>
+	</EnglishText>
+</Database>
