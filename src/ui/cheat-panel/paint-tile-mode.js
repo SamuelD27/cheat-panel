@@ -25,10 +25,12 @@
  *
  * The 3D terrain mesh does not redraw live for terrain-type changes (2026-06-13 on 1.4.x; 2026-11-02 binary check on
  * 1.5.0: the in-game view does not listen to TerrainTypeChanged) — the data IS applied, and the flash/status read it
- * back. A save + reload is expected to show terrain shape (inferred). A painted Navigable River is never drawn as a
- * river, live or after reload: the 3D map draws rivers from river data that setTerrain does not write. Such tiles get
- * the panel's own persistent blue mark instead (api.js PAINTED-RIVER STAND-IN OVERLAY, started at the bottom of this
- * file; its overlay group is separate from this mode's placementOverlayGroup, which the base mode resets on exit).
+ * back. A save + reload is expected to show terrain shape (inferred). A painted Navigable River is not drawn as a river
+ * by the paint: the 3D map draws rivers from river data that setTerrain does not write. Such tiles get the panel's own
+ * persistent blue mark (api.js PAINTED-RIVER STAND-IN OVERLAY, started at the bottom of this file; its overlay group is
+ * separate from this mode's placementOverlayGroup, which the base mode resets on exit), and since 2026-11-03 each one is
+ * queued for the river writer (api.js RIVER WRITER), whose writes show after a save & load. The 'River' category
+ * (Remove river (queued)) uses this same mode: a click only queues a removal, so the result is orange (queued) or red.
  */
 import LcpPlotMode from '/base-standard/ui/cheat-panel/lcp-plot-mode-base.js';
 import { InterfaceMode } from '/base-standard/ui/cheat-panel/shared/imports.js';
@@ -64,9 +66,12 @@ class LcpPaintTileMode extends LcpPlotMode {
         try { typeLabel = api.paintTypeLabel(category, typeString); } catch (_) {}
         this._typeLabel = typeLabel;
         this.bannerTitle = 'PAINT MODE — ' + category + ' = ' + typeLabel;
-        this.hintText = 'Click tiles. Amber = applying, green = done, orange = done with a note / partly done, red = refused (reason below).';
+        this.hintText = (category === 'River')
+            ? 'Click a tile with a river. Orange = queued for the river writer, red = refused (reason below).'   // 2026-11-03: queue only
+            : 'Click tiles. Amber = applying, green = done, orange = done with a note / partly done, red = refused (reason below).';
         // 2026-11-02 honest copy: the 3D map has no live redraw for terrain-type changes; a reload is EXPECTED to show
-        // terrain shape (INFERRED, never confirmed in-game) and never shows a painted navigable river (verified).
+        // terrain shape (INFERRED, never confirmed in-game). A painted navigable river shows only once the river writer
+        // has written its river data and the game was saved & loaded (2026-11-03; the warning below says so).
         const shapesChange = (category === 'Terrain' || category === 'Wonder');
         this.hintNote = shapesChange
             ? 'Terrain shape changes (mountain, hill, flat, water) are expected to show on the 3D map only after a save & reload (not guaranteed). The tile tooltip shows the change right away.'

@@ -1453,9 +1453,9 @@ export function addPopulationAll(amount) { if (!guardSP()) return; for (const c 
 //   bool setResource(ResourceTypes, PlotCoord, int amount)   (the tuner passes 1 to place, 0 to erase)
 // The JS WorldBuilder object is isActive / startBlock / endBlock / MapPlots, and MapPlots has eight setters (the
 // four above + setFertility, setOwnership, setRevealed, setAllRevealed): no river, continent or elevation setter.
-// (TerrainBuilder binds river functions, but whether this UI context can reach TerrainBuilder is unprobed — the
-// first paint logs it, see paintApi.) Because a painted navigable river is never drawn as a river, the panel draws its
-// own stand-in mark on such tiles (2026-11-02, see PAINTED-RIVER STAND-IN OVERLAY below enterPaintMode).
+// (TerrainBuilder binds river functions, but this UI context can't reach TerrainBuilder: live probe 2026-11-03.)
+// Because a paint alone never makes a drawn river, the panel draws its own stand-in mark on such tiles (2026-11-02, see
+// PAINTED-RIVER STAND-IN OVERLAY below enterPaintMode) and queues them for the river writer (2026-11-03, RIVER WRITER).
 //
 // 2026-10-18 REWRITE — why painting "worked half the time":
 //   The old paintPlot read the plot back inside the SAME call. On build 25516395 the write shows up a moment
@@ -1706,6 +1706,7 @@ function paintName(type) {
 export function paintTypeLabel(category, typeString) {
     if (typeString === CLEAR_RESOURCE) return 'Clear resource';
     if (typeString === CLEAR_FEATURE) return 'Clear feature';
+    if (typeString === RIVER_REMOVE) return RIVER_REMOVE_LABEL;
     return paintName(typeString);
 }
 function paintAgeType() { try { return GameInfo.Ages.lookup(Game.age)?.AgeType || null; } catch (_) { return null; } }
@@ -1751,14 +1752,34 @@ function paintWonderEntryProblem(_type) {
     return null;
 }
 // 2026-11-02: setTerrain writes only the tile's terrain; the 3D map draws rivers from separate river data (verified in the
-// 1.5.0 binary + a third-party save/load probe), so a painted navigable river is never drawn, live or after a reload.
-// "painting doesn't change" (not "the panel can't write"): whether this context can reach TerrainBuilder.setRiverInfo is
-// still unprobed (paint.api tb.setRiverInfo breadcrumb), so the copy states what the paint does, not an engine limit.
-const PAINT_RIVER_WARNING = 'Navigable River changes only the tile\'s terrain. The game draws rivers from separate river data that painting '
-    + 'doesn\'t change, so the 3D map won\'t show a river there: not right away and not after a save & reload. The tile tooltip and the '
-    + 'panel\'s Map tab show the change. For water that boats can use, paint Coast. To remove the river terrain, paint the tile\'s '
-    + 'old terrain back (e.g. Flat or Hills); a forest, marsh, reef or resource that this paint removed does not come back. '
-    + 'With "Mark painted river tiles on the 3D map" on (Creative tab), the panel also tints such tiles blue on the 3D map.';
+// 1.5.0 binary + a third-party save/load probe), so a painted navigable river is not drawn by the paint alone.
+// 2026-11-03 (river writer): this UI context has no TerrainBuilder (live probe: TerrainBuilder=undefined here), so the
+// panel queues each painted tile for the river writer (RIVER WRITER section below), a Mac-side tool that writes the
+// river data through the tuner. Its writes show only after a save & load (VERIFIED), and the text says whether the
+// writer is running (heartbeat), so it never claims a river exists before that. Built per call (the status changes).
+// Review PANEL-UNDO-1 (2026-11-03): painting the old terrain back removes only the river TERRAIN; once the writer has
+// written the tile its river data stays, so the copy names River > Remove river (queued) as the way to remove it then
+// (no "undo" wording: nothing restores what a paint removed, see truthful-ux-flat-does-not-undo).
+function paintRiverWarning(st) {
+    return 'Navigable River changes only the tile\'s terrain. The 3D map draws rivers from separate river data, which the panel can\'t '
+        + 'write from the game\'s UI. The panel notes each painted tile for the river writer, a dev tool that runs through the tuner'
+        + rwHintClause(st) + '. After the writer has run, save and load the game to see the river. Until then the tile stays a painted '
+        + 'river: the tooltip and the Map tab show it, and boats may not be able to use it. To remove the river terrain, paint the '
+        + 'tile\'s old terrain back (e.g. Flat or Hills); a forest, marsh, reef or resource this paint removed does not come back. '
+        + 'Once the river writer has written the tile, painting does not remove its river data: remove it with River > Remove '
+        + 'river (queued) on the repainted land tile. That tool refuses water and mountain tiles, so for those paint the tile land '
+        + 'first, remove the river, let the river writer run, then paint the water or mountain back. '
+        + 'With "Mark painted river tiles on the 3D map" on (Creative tab), the panel tints these tiles blue until a save & load '
+        + 'shows their river data.';
+}
+// The River category's one tool (2026-11-03, user request: a minor-river remover). It writes nothing from the UI: it
+// queues an 'rm' entry for the river writer (rwRemoveRiverAt).
+function paintRiverRemoveHint(st) {
+    return 'Click a tile with a river (minor or navigable) to queue its river data for removal. The river writer, a dev tool that '
+        + 'runs through the tuner, removes it' + rwHintClause(st) + '; the river stays on the 3D map until you save & load after that. '
+        + 'River data can\'t be removed from Navigable River terrain (paint the terrain away first), water or mountain tiles. River '
+        + 'tiles upstream then end at the cleared tile.';
+}
 
 // Enumerates all types in a paint category for the type-picker list. Returns [{type, name, hint}]: `type` is the *Type
 // string (e.g. "TERRAIN_GRASS"), `name` the localized label (plus a short tag when the data says the type behaves
@@ -1777,13 +1798,21 @@ export function getMapPaintTypes(category) {
             }
             return out;
         }
+        if (category === 'River') {   // 2026-11-03: queued river edits (river writer); one tool so far
+            let st = null;
+            try { st = getRiverWriterStatus(); } catch (_) {}
+            out.push({ type: RIVER_REMOVE, name: RIVER_REMOVE_LABEL, hint: paintRiverRemoveHint(st) });
+            return out;
+        }
         const src = { Terrain: R.terr, Feature: R.feat, Resource: R.res, Biome: R.biome }[category];
         if (!src) { ERR('getMapPaintTypes: unknown category', category); return out; }
         const age = paintAgeType();
+        let rwSt = null;
+        if (category === 'Terrain') { try { rwSt = getRiverWriterStatus(); } catch (_) {} }
         for (const type of Object.keys(src)) {
             if (category === 'Feature' && R.nw[type]) continue;   // natural wonders live in the Wonder category
             let name = src[type].name || type, hint = '';
-            if (category === 'Terrain' && type === 'TERRAIN_NAVIGABLE_RIVER') { name += ' (terrain only)'; hint = PAINT_RIVER_WARNING; }
+            if (category === 'Terrain' && type === 'TERRAIN_NAVIGABLE_RIVER') { name += ' (terrain only)'; hint = paintRiverWarning(rwSt); }
             if (category === 'Feature' && src[type].removable === false) hint = 'The game marks it as non-removable.';
             if (category === 'Resource') {
                 const ages = R.resAges[type], tip = paintLocText(src[type].tip);
@@ -1813,13 +1842,23 @@ export function paintTypeHint(category, typeString) {
  */
 export function paintEntryProblem(category, typeString) {
     if (!category || !typeString) return 'Pick a type first.';
+    // River tools write nothing through WorldBuilder: they need only the game-settings channel the queue lives in.
+    if (category === 'River') {
+        if (typeString !== RIVER_REMOVE) return 'Unknown river tool.';
+        const c = rwCfg(true);
+        if (!c.cfg || typeof c.cfg.setValue !== 'function') return 'The panel can\'t reach the game\'s settings (Configuration.editGame) here, so it can\'t queue river edits for the river writer.';
+        return null;
+    }
     if (typeof WorldBuilder === 'undefined' || !WorldBuilder.MapPlots) return 'WorldBuilder is not available in this context.';
     if (category === 'Wonder') return paintWonderEntryProblem(typeString);
     return null;
 }
 /** A warning to show while painting this type (null = none). Painting is still allowed. */
 export function paintEntryWarning(category, typeString) {
-    if (category === 'Terrain' && typeString === 'TERRAIN_NAVIGABLE_RIVER') return PAINT_RIVER_WARNING;
+    let st = null;
+    const rw = () => { if (!st) { try { st = getRiverWriterStatus(); } catch (_) {} } return st; };
+    if (category === 'Terrain' && typeString === 'TERRAIN_NAVIGABLE_RIVER') return paintRiverWarning(rw());
+    if (category === 'River' && typeString === RIVER_REMOVE) return paintRiverRemoveHint(rw());
     return null;
 }
 
@@ -2206,8 +2245,13 @@ function paintPlan(category, type, loc, s, R) {
         // After the writes land: does the game's river data follow (it has no UI setter)? Did the continent change?
         // beforeTerr / removed (2026-11-02): the river result names the terrain to paint back and what this paint removed,
         // instead of promising that "Flat" undoes it (Flat restores no feature, resource, hill or water).
-        if (type === 'TERRAIN_NAVIGABLE_RIVER' || s.river || s.terr === 'TERRAIN_NAVIGABLE_RIVER') P.riverCheck = { want: (type === 'TERRAIN_NAVIGABLE_RIVER') ? 'nav' : null, before: s.riverType,
-            beforeTerr: s.terr || null, removed: P.notes.filter(n => n.indexOf('removed ') === 0).map(n => n.slice(8)) };
+        // beforeWater / toTerr (2026-11-03): the river writer queue entry's W flag (old terrain was water) and whether
+        // River > Remove river can clear the river data the new terrain keeps (not on water / mountain / river terrain).
+        // Review PANEL-UNDO-1: a tile the river writer has written reads no navigable river here until a save & load, so
+        // it gets the check too (e.g. Navigable River -> Coast -> Flat), and the result says its river data stays.
+        if (type === 'TERRAIN_NAVIGABLE_RIVER' || s.river || s.terr === 'TERRAIN_NAVIGABLE_RIVER' || rwWrittenHere(loc)) P.riverCheck = { want: (type === 'TERRAIN_NAVIGABLE_RIVER') ? 'nav' : null, before: s.riverType,
+            beforeTerr: s.terr || null, removed: P.notes.filter(n => n.indexOf('removed ') === 0).map(n => n.slice(8)),
+            beforeWater: !!s.water, toTerr: type };
         P.contCheck = true;
         return P;
     }
@@ -2292,12 +2336,21 @@ async function paintRiverPostCheck(id, loc, rc) {
     let navFlag = null;
     try { if (paintApi().isNavigableRiver) navFlag = !!GameplayMap.isNavigableRiver(loc.x, loc.y); } catch (_) {}
     diag('paint.river:' + id + ',want=' + (rc.want || 'keep') + ',before=' + rc.before + ',after=' + after + ',isNavigableRiver=' + navFlag + ',settled=' + w.ok + ',ms=' + w.ms);
-    // Wording per case (2026-11-02): setTerrain never writes river data, so a painted navigable river is never drawn on
-    // the 3D map; the old text said "reports no river here (river type: minor)" when the tile DID have a minor river.
+    // Wording per case (2026-11-02): setTerrain never writes river data, so the paint alone draws no river on the 3D map;
+    // the old text said "reports no river here (river type: minor)" when the tile DID have a minor river. 2026-11-03: the
+    // tile is queued for the river writer and the text says what happens next (writer running or not, save & load).
+    // The river writer's records for this tile (LCP_RW_LAST): this context reads the writer's ctx-1 writes and removals
+    // only after a save & load, so `after` alone is stale for such a tile (review PANEL-UNDO-1 / PANEL-REPAINT-2).
+    let rwSt = null;
+    try { rwSt = getRiverWriterStatus({ fresh: true }); } catch (_) {}
+    const rwF = rwTileFacts(loc, rwSt);
     if (rc.want === 'nav') {
-        const word = paintRiverWord(after);
-        diag('paint.river.case:' + id + ',' + (after === nav ? (rc.before === nav ? 'real-nav-stays' : 'nav-now') : 'no-nav:' + word));
-        if (after === nav) {
+        // PANEL-REPAINT-2: the writer has removed this tile's river data; the stale copy still reads the old river, so the
+        // tile is treated like one without river data (queued 'n'), never as "the river stays".
+        const removedStale = rwF.removed && paintIsRiver(after);
+        const word = removedStale ? 'removed' : paintRiverWord(after);
+        diag('paint.river.case:' + id + ',' + ((after === nav && !removedStale) ? (rc.before === nav ? 'real-nav-stays' : 'nav-now') : 'no-nav:' + word));
+        if (after === nav && !removedStale) {
             return { status: 'ok', note: (rc.before === nav) ? 'the tile already had a real navigable river, so the river stays'
                                                             : 'the game counts it as a navigable river' };
         }
@@ -2307,16 +2360,53 @@ async function paintRiverPostCheck(id, loc, rc) {
         let oldWater = false;
         try { const row = oldT ? paintRules().terr[oldT] : null; oldWater = !!(row && row.water); } catch (_) {}
         const removed = Array.isArray(rc.removed) ? rc.removed : [];
+        const oldName = oldT ? paintName(oldT) : 'the tile\'s old terrain (e.g. Flat)';
+        // PANEL-UNDO-1: painting the old terrain back does not remove river data the writer has written by then; that takes
+        // River > Remove river (queued), which refuses water / mountain / unknown terrain (paint land first there).
+        const oldLand = rwRemovableTerr(oldT);
         const tail = (oldWater ? '' : '; paint Coast for water that boats can use')
-            + '; to remove the river terrain, paint ' + (oldT ? paintName(oldT) : 'the tile\'s old terrain (e.g. Flat)') + ' back'
-            + (removed.length ? ' (that does not bring back the removed ' + removed.join(' and ') + ')' : '');
+            + '; to remove the river terrain, paint ' + oldName + ' back'
+            + (removed.length ? ' (that does not bring back the removed ' + removed.join(' and ') + ')' : '')
+            + (oldLand ? '; once the river writer has written the tile, painting it back leaves the river data, so then also use River > Remove river (queued)'
+                       : '; once the river writer has written the tile, painting it back leaves the river data and River > Remove river (queued) refuses water and mountain tiles, so then paint the tile land (e.g. Flat), use Remove river, let the river writer run, and paint ' + oldName + ' back after that');
         diag('paint.river.tail:' + id + ',oldTerr=' + diagTok(oldT || 'unknown', 40) + ',oldWater=' + oldWater + ',removed=' + removed.length);
-        if (word === 'minor') return { status: 'warn', note: 'but the game has only a minor river here, so the 3D map won\'t show a navigable river (not after a save & reload either) and boats may not be able to use it' + tail };
-        if (word === 'unknown') return { status: 'warn', note: 'but the panel could not read the game\'s river data here; a painted navigable river is not drawn on the 3D map (not after a save & reload either)' + tail };
-        return { status: 'warn', note: 'but the game has no river here, so the 3D map won\'t show a river (not after a save & reload either) and boats may not be able to use it' + tail };
+        // 2026-11-03 river writer: queue the tile ('n', W = old terrain was water; unknown counts as water, i.e. "never
+        // join an existing river"), only here, where the panel sees navigable-river terrain without navigable river data
+        // (a tile that already reads navigable needs no write, and an entry the writer finds no work for would linger).
+        const q = rwQueueAdd('n', loc, rwWasWater(oldT, rc));
+        let st = rwSt;
+        try { st = getRiverWriterStatus({ fresh: true }); } catch (_) {}
+        diag('rw.paint:' + id + ',@' + loc.x + '/' + loc.y + ',case=' + word + ',queued=' + (q.ok ? 1 : 0) + (q.ok ? '' : ',why=' + diagTok(q.why, 60))
+            + ',state=' + (st ? st.state : '?') + ',dry=' + (st && st.dry ? 1 : 0));
+        const queued = rwQueuedText(q, st);
+        if (word === 'removed') return { status: 'warn', note: 'but the river writer has removed this tile\'s river data (run #' + rwSeqText(rwF.seq) + '; the panel reads the old river until a save & load), so the game has no river data here now. ' + queued + tail };
+        if (word === 'minor') return { status: 'warn', note: 'but the game has only a minor river here for now; the river writer can make it navigable. ' + queued + tail };
+        if (word === 'unknown') return { status: 'warn', note: 'but the panel could not read the game\'s river data here; a painted navigable river is not drawn on the 3D map (until the river writer has run and you have saved & loaded). ' + queued + tail };
+        return { status: 'warn', note: 'but the game has no river data here yet, so the 3D map won\'t show a river and boats may not be able to use it. ' + queued + tail };
     }
-    if (rc.before === nav && after === nav) return { status: 'warn', note: 'but the navigable river stays: painting doesn\'t remove river data, so the 3D map keeps drawing the river (also after a save & reload)' };
-    if (paintIsRiver(rc.before) && after === rc.before) return { status: 'ok', note: 'the ' + paintRiverWord(after) + ' river stays (painting doesn\'t change rivers)' };
+    // PANEL-UNDO-1: the river writer has written navigable river data here (this context can't read it before a save &
+    // load). Painting never removes river data, so this is never a plain 'Done': the result names the way to remove it
+    // (River > Remove river, land first for water / mountain), and offers nothing that writes.
+    if (rwF.written) {
+        const land = rwRemovableTerr(rc.toTerr);
+        diag('paint.river.written:' + id + ',@' + loc.x + '/' + loc.y + ',to=' + diagTok(rc.toTerr || 'unknown', 40) + ',removable=' + (land ? 1 : 0)
+            + ',seq=' + diagTok(rwSeqText(rwF.seq), 12) + ',after=' + after);
+        const head = 'but the river writer already wrote navigable river data here (run #' + rwSeqText(rwF.seq) + '), and painting does not remove it: '
+            + 'after a save & load the 3D map will draw a river on this tile';
+        if (land) return { status: 'warn', note: head + '; to remove it, use River > Remove river (queued)' };
+        return { status: 'warn', note: head + '. River > Remove river (queued) refuses water and mountain tiles, so to remove it: paint the tile land '
+            + '(e.g. Flat) first, use Remove river, let the river writer run, then paint ' + (rc.toTerr ? paintName(rc.toTerr) : 'this terrain') + ' back' };
+    }
+    // Final review (2026-11-03): the river writer has already removed this tile's river data. This context reads the old
+    // river until a save & load, so the cases below would wrongly say "the river stays".
+    if (rwF.removed && paintIsRiver(after)) {
+        diag('paint.river.removed:' + id + ',@' + loc.x + '/' + loc.y + ',seq=' + diagTok(rwSeqText(rwF.seq), 12) + ',after=' + after);
+        return { status: 'ok', note: 'the river writer already removed this tile\'s river data (run #' + rwSeqText(rwF.seq) + '); the 3D map drops the river after a save & load' };
+    }
+    // River data a terrain paint keeps: River > Remove river (queued) can clear it unless the new terrain is water / mountain.
+    const removeHint = rwRemovableTerr(rc.toTerr) ? '; use River > Remove river (queued) to remove it' : '';
+    if (rc.before === nav && after === nav) return { status: 'warn', note: 'but the navigable river stays: painting doesn\'t remove river data, so the 3D map keeps drawing the river (also after a save & reload)' + removeHint };
+    if (paintIsRiver(rc.before) && after === rc.before) return { status: 'ok', note: 'the ' + paintRiverWord(after) + ' river stays (painting doesn\'t change rivers)' + removeHint };
     if (after !== rc.before) return { status: 'ok', note: 'river: ' + paintRiverWord(rc.before) + ' → ' + paintRiverWord(after) };
     return null;
 }
@@ -2436,9 +2526,12 @@ async function paintSimpleAsync(id, category, type, loc, progress) {
         const tail = why.length ? '. Likely: ' + why.join('; ') + '.'
             : P.failText ? '. Try again; if it keeps failing, the game does not allow it from the UI.'
             : '. No placement rule the panel knows says no — the game may be busy; try again.';
+        // late.river (review PANEL-LATE-3): a Navigable River paint that lands after the timeout still has to reach the
+        // river writer queue; the late check queues it with the pre-paint terrain kept here (rc.beforeTerr / beforeWater).
         return paintResult('fail', (P.failText || ('The game did not apply ' + P.label + ' at ' + paintAt(loc))) + ' (waited ' + paintSecs(r.ms) + ')' + tail,
             { plots, late: { status: 'ok', verify: () => st.items.every(it => readPaintType(st.kind, it.loc) === (it.type == null ? null : it.type)),
-                text: (P.okText || (P.label + ' painted at ' + paintAt(loc))) + ' after all (the game was slow to apply it).' } });
+                text: (P.okText || (P.label + ' painted at ' + paintAt(loc))) + ' after all (the game was slow to apply it).',
+                river: (P.riverCheck && P.riverCheck.want === 'nav') ? { loc: { x: loc.x, y: loc.y }, rc: P.riverCheck } : null } });
     }
     // STEP 4/4: what else the game did (river data, continent, resource rules) → notes on the result
     const notes = P.notes.slice();
@@ -2814,7 +2907,8 @@ async function placeWonderAsync(id, type, loc, progress) {
  *   'partial' (main write landed, a follow-up step did not) | 'fail' (the engine did not apply it; message carries the
  *   likely reason) | 'refused' (nothing written — message says why) | 'busy' (an earlier paint on the same tile /
  *   another wonder is still in flight).
- * opts.onProgress(text) narrates the steps; opts.onLate(result) fires if a timed-out write lands later.
+ * opts.onProgress(text) narrates the steps; opts.onLate(result) fires if a timed-out write lands later (a late Navigable
+ * River paint is then queued for the river writer too, review PANEL-LATE-3).
  */
 export function paintPlotAsync(category, typeString, loc, opts = {}) {
     const id = ++_paintSeq;
@@ -2826,6 +2920,8 @@ export function paintPlotAsync(category, typeString, loc, opts = {}) {
         if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) return paintResult('refused', 'That is not a map tile.');
         const entry = paintEntryProblem(category, typeString);
         if (entry) return paintResult('refused', entry);
+        // River tools (2026-11-03) only queue an edit for the river writer: no WorldBuilder write, nothing to wait for.
+        if (category === 'River') return rwRemoveRiverAt(id, typeString, loc);
         const key = paintKey(loc);
         if (_paintBusyPlots.has(key)) return paintResult('busy', 'Still applying the previous paint on ' + paintAt(loc) + ' — wait a moment.');
         _paintBusyPlots.add(key);
@@ -2859,10 +2955,47 @@ function paintScheduleLateCheck(id, res, opts) {
         if (!landed) return;
         const late = paintResult(res.late.status || 'ok', res.late.text || 'The paint landed after all (the game was slow to apply it).', { plots: res.plots });
         late.seq = id; late.ms = res.ms;
+        // PANEL-LATE-3: a late Navigable River paint is queued for the river writer like an on-time one.
+        if (res.late.river) {
+            const rq = paintLateRiverQueue(id, res.late.river);
+            if (rq) { late.status = rq.status; late.message = late.message + ' ' + rq.note; }
+        }
         paintRecordResult(late);
         proAfterPaint(late, 'late');   // the write landed after all: redraw the painted-river marker
         try { if (opts.onLate) opts.onLate(late); } catch (_) {}
     }, PAINT_LATE_CHECK_MS);
+}
+// Review PANEL-LATE-3: paintRiverPostCheck (the only other place that queues 'n') never runs for a paint that landed
+// after the step timeout, and painting the tile again is a no-op ("Already Navigable River"), so the late check queues
+// it here: when the tile does not read navigable river data (or reads only the old river the writer has removed), queue
+// 'n' with the pre-paint terrain (lr.rc) and return {status:'warn', note: the queued sentence}; null = nothing queued
+// (the tile reads navigable river data, multiplayer, or an error). Behind guardSP (and rwQueueAdd's own). Never throws.
+function paintLateRiverQueue(id, lr) {
+    try {
+        const loc = lr && lr.loc, rc = (lr && lr.rc) || {};
+        if (!loc || !Number.isInteger(loc.x) || !Number.isInteger(loc.y)) return null;
+        if (!guardSP()) { diag('rw.paint:' + id + ',@' + loc.x + '/' + loc.y + ',case=late,queued=0,why=multiplayer'); return null; }
+        const nav = paintRiverNav();
+        const after = paintRiverRaw(loc);
+        let st = null;
+        try { st = getRiverWriterStatus({ fresh: true }); } catch (_) {}
+        const f = rwTileFacts(loc, st);
+        const word = (f.removed && paintIsRiver(after)) ? 'removed' : paintRiverWord(after);
+        if (word === 'navigable') {
+            diag('rw.paint:' + id + ',@' + loc.x + '/' + loc.y + ',case=late-navigable,queued=0');
+            return null;
+        }
+        const q = rwQueueAdd('n', loc, rwWasWater(rc.beforeTerr || null, rc));
+        try { st = getRiverWriterStatus({ fresh: true }); } catch (_) {}
+        diag('rw.paint:' + id + ',@' + loc.x + '/' + loc.y + ',case=late-' + word + ',queued=' + (q.ok ? 1 : 0) + (q.ok ? '' : ',why=' + diagTok(q.why, 60))
+            + ',state=' + (st ? st.state : '?') + ',dry=' + (st && st.dry ? 1 : 0));
+        const head = (word === 'unknown') ? 'The panel could not read the game\'s river data here. '
+            : 'The game has no navigable river data here yet, so the 3D map won\'t draw a navigable river here. ';
+        return { status: 'warn', note: head + rwQueuedText(q, st) + '.' };
+    } catch (e) {
+        try { diag('paint.err:' + id + ',stage=late-river,' + paintErrText(e)); } catch (_) {}
+        return null;
+    }
 }
 
 // Enter the custom paint map-click mode (INTERFACEMODE_LCP_PAINT_TILE, registered in paint-tile-mode.js).
@@ -2945,12 +3078,566 @@ export function setLcpSetting(name, value) {
     return persisted && verified;
 }
 
+// ─── RIVER WRITER: QUEUE + STATUS (2026-11-03, tuner-only river writer) ─────────────────────────────────────
+// This UI context can't write river data (live probe 2026-11-03: TerrainBuilder is undefined here). The river writer
+// (scripts/river-writer/river_watch.py, a Mac-side watcher the user starts in Terminal) polls this context over the
+// tuner port every 2 s, applies what the panel queues with TerrainBuilder.setRiverInfo in the Tuner context (ctx 1) and
+// writes its result back here. The UI's copy of the map sees those writes only after a save & load (VERIFIED), so the
+// panel never claims a river exists before that, and the copy says whether the writer is running.
+// Channel (VERIFIED live): Configuration.editGame().getValue/setValue in this context (read back at once, kept in the save).
+//   LCP_RWQ      panel appends, writer consumes: 'v1|n:X:Y:W|rm:X:Y|...'. n = painted Navigable River (W=1: the old
+//                terrain was water); rm = remove the river data. One entry per tile (the last one wins); cap 120 entries /
+//                2500 chars (then the panel refuses with a note). A value with another version tag is never overwritten.
+//   LCP_RW_LAST  writer writes, panel only reads: JSON {v:1, seq, turn, at, wroteN, wrote:[plotIndex], removedN,
+//                removed:[plotIndex], pendN, enclosedN, failN, fail:[[plotIndex,why]], lake:[plotIndex], refused:[[x,y,why]]}.
+//   LCP_RW_STATE writer-owned; the panel never touches it, and never clears LCP_RW_LAST either.
+// Heartbeat: on every poll the watcher sets globalThis.__lcpRiverWriter = {v:1, hb:<epoch ms>, seq, pid, mode:'watch'|'dry'}
+// (not saved). hb younger than 10 s = running. It may live in another JS realm than this module (unverified): if the
+// panel never sees it, the state is 'unknown' and the copy falls back to LCP_RW_LAST.at.
+// Status companion (review RW-3): globalThis.__lcpRiverWriterSt = {v:1, pid, hb, until, st:'ok'|'refused'|'failing'|
+// 'stopped', why, at}. `until` keeps the heartbeat fresh while a run takes longer than a poll (the watcher sets it at the
+// start and end of each run); `st` says whether the writer is actually writing, so the copy never says "running and
+// should write it" while every run is refused or failing; 'stopped' is set on a clean Ctrl+C.
+// Status is re-read on every overlay refresh, Map-tab render / hover (cached 1 s) and Creative-tab render; the
+// 'lcp-river-writer' engine event and a short poll while the queue is not empty only make the overlay update sooner.
+// Breadcrumbs: rw.queue (add / refuse / read), rw.status (on change), rw.confirm (once per run seq), rw.paint, rw.remove,
+// rw.poll, rw.event, rw.hook. Every queue write is behind guardSP; nothing here throws.
+const RW_KEY_QUEUE = 'LCP_RWQ';
+const RW_KEY_LAST = 'LCP_RW_LAST';
+const RW_QUEUE_VER = 'v1';
+const RW_QUEUE_MAX = 120;                 // entries
+const RW_QUEUE_MAX_CHARS = 2500;
+const RW_HB_FRESH_MS = 10000;             // heartbeat younger than this = running
+const RW_CACHE_MS = 1000;                 // getRiverWriterStatus({cached:true}) cache, for the Map-tab hover only
+const RW_POLL_MS = 3000;                  // while the queue is not empty: look for a new LCP_RW_LAST ...
+const RW_POLL_MAX = 40;                   // ... for up to ~2 min
+const RW_EVENT = 'lcp-river-writer';      // optional engine.trigger from the writer (may never reach this context)
+export const RIVER_WRITER_START_CMD = 'python3 -I ~/Civ7/cheat-panel/scripts/river-writer/river_watch.py';
+export const RIVER_REMOVE = 'LCP_RIVER_REMOVE';
+const RIVER_REMOVE_LABEL = 'Remove river (queued)';
+const RW_WHY = {
+    'rm-on-nav-terrain': 'it is Navigable River terrain (paint the terrain away first)',
+    'engine-noop-water-or-mountain': 'the game can\'t remove river data from water or mountain tiles',
+    'no-river': 'the game had no river data there',
+    'state-full': 'the river writer\'s list of cleared tiles is full (see the river writer log)',
+};
+// LCP_RW_LAST.fail codes as text (review RW-9): only 'readback' codes are writes that did not read back.
+function rwFailText(why) {
+    const w = String(why == null ? '' : why);
+    let m = /^component-too-big:(\d+)/.exec(w);
+    if (m) return 'a painted area of ' + m[1] + ' tiles is more than one run may write (--max-writes); nothing was written';
+    m = /^state-full:(\d+)/.exec(w);
+    if (m) return 'not written: the river writer\'s list of unfinished (pending) rivers is full; paint some pending rivers on to the water first';
+    if (/^(rm-|lake-)?readback/.test(w)) return 'the write did not read back (' + w + ')';
+    if (w === 'bad-dir' || w === 'guard-water-or-mountain') return 'skipped by a safety check, nothing written (' + w + ')';
+    return w || '?';
+}
+const _rwT0 = Date.now();                 // this module instance's start (game load or Reload UI)
+const _rw = { hbSeen: false, lastRaw: null, last: null, cache: null, cacheAt: 0, statusSig: '', confirmSeq: undefined,
+    pollTimer: null, pollN: 0, pollKey: null, hooked: false };
+
+// The game-settings object for the queue: editGame() (verified read-back path) or, read-only, getGame().
+function rwCfg(forWrite) {
+    try {
+        if (typeof Configuration === 'undefined' || !Configuration) return { cfg: null, how: '', why: 'no-Configuration' };
+        if (typeof Configuration.editGame === 'function') {
+            const c = Configuration.editGame();
+            if (c) return { cfg: c, how: 'editGame', why: '' };
+            if (forWrite) return { cfg: null, how: '', why: 'editGame-null' };
+        } else if (forWrite) return { cfg: null, how: '', why: 'no-editGame' };
+        if (typeof Configuration.getGame === 'function') {
+            const g = Configuration.getGame();
+            if (g && typeof g.getValue === 'function') return { cfg: g, how: 'getGame', why: '' };
+        }
+        return { cfg: null, how: '', why: 'no-editGame' };
+    } catch (e) { return { cfg: null, how: '', why: 'threw:' + revealErrText(e) }; }
+}
+// One string value: {ok, val ('' = unset), why}. A non-string value is an error unless hasValue says the key is unset.
+function rwGet(key) {
+    const c = rwCfg(false);
+    if (!c.cfg) return { ok: false, val: '', why: c.why };
+    try {
+        if (typeof c.cfg.getValue !== 'function') return { ok: false, val: '', why: 'no-getValue' };
+        const v = c.cfg.getValue(key);
+        if (typeof v === 'string') return { ok: true, val: v, why: '' };
+        if (v === undefined || v === null) return { ok: true, val: '', why: '' };
+        let has = null;
+        try { if (typeof c.cfg.hasValue === 'function') has = !!c.cfg.hasValue(key); } catch (_) {}
+        if (has === false) return { ok: true, val: '', why: '' };
+        return { ok: false, val: '', why: 'not-string:' + typeof v };
+    } catch (e) { return { ok: false, val: '', why: 'threw:' + revealErrText(e) }; }
+}
+function rwQueueParse(raw) {
+    if (!raw) return { ok: true, entries: [], why: '' };
+    const parts = String(raw).split('|');
+    if (parts[0] !== RW_QUEUE_VER) return { ok: false, entries: [], why: 'unknown-version:' + String(parts[0]).slice(0, 12) };
+    return { ok: true, entries: parts.slice(1).filter((e) => e !== ''), why: '' };
+}
+const RW_ENTRY_RE = /^(n):(\d+):(\d+):([01])$|^(rm):(\d+):(\d+)$/;
+function rwEntryInfo(e) {
+    const m = RW_ENTRY_RE.exec(e);
+    if (!m) return null;
+    return m[1] ? { kind: 'n', x: +m[2], y: +m[3], w: +m[4] } : { kind: 'rm', x: +m[6], y: +m[7], w: null };
+}
+function rwPlural(n, word) { const k = (typeof n === 'number' && isFinite(n)) ? n : 0; return k + ' ' + word + (k === 1 ? '' : 's'); }
+function rwClock(ms) {
+    try { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); }
+    catch (_) { return '?'; }
+}
+
+/**
+ * The river writer queue (LCP_RWQ) as the panel sees it: {ok, entries, items:[{kind,x,y,w}], n, rm, other, len, why}.
+ * `log` adds one rw.queue op=read breadcrumb (the Creative tab passes it; overlay / hover reads stay quiet). Never throws.
+ */
+export function rwQueueRead(log) {
+    const out = { ok: false, entries: [], items: [], n: 0, rm: 0, other: 0, len: 0, why: '' };
+    try {
+        const g = rwGet(RW_KEY_QUEUE);
+        if (!g.ok) out.why = g.why;
+        else {
+            out.len = g.val.length;
+            const p = rwQueueParse(g.val);
+            if (!p.ok) out.why = p.why;
+            else {
+                out.ok = true;
+                out.entries = p.entries;
+                for (const e of p.entries) {
+                    const it = rwEntryInfo(e);
+                    if (!it) { out.other++; continue; }
+                    out.items.push(it);
+                    if (it.kind === 'n') out.n++; else out.rm++;
+                }
+            }
+        }
+    } catch (e) { out.ok = false; out.why = 'threw:' + revealErrText(e); }
+    if (log) {
+        diag('rw.queue:op=read,n=' + out.entries.length + ',len=' + out.len + ',ok=' + out.ok + ',paint=' + out.n + ',rm=' + out.rm
+            + (out.other ? ',other=' + out.other : '') + (out.why ? ',why=' + diagTok(out.why, 80) : ''));
+    }
+    return out;
+}
+
+/**
+ * Queue one river edit for the river writer: kind 'n' (painted Navigable River at loc; wasWater = the old terrain was
+ * water) or 'rm' (remove the river data at loc). Replaces an earlier entry for the same tile; refuses at the cap.
+ * Behind guardSP. Returns {ok, why, n, len, replaced, entry}; never throws. One rw.queue breadcrumb.
+ */
+export function rwQueueAdd(kind, loc, wasWater) {
+    const x = loc ? loc.x : undefined, y = loc ? loc.y : undefined;
+    const w = (kind === 'n') ? (wasWater ? 1 : 0) : null;
+    const res = { ok: false, why: '', n: 0, len: 0, replaced: false, entry: '' };
+    const crumb = (op) => {
+        try {
+            diag('rw.queue:op=' + op + ',kind=' + diagTok(kind, 8) + ',x=' + diagTok(x, 8) + ',y=' + diagTok(y, 8) + ',w=' + (w == null ? '-' : w)
+                + ',n=' + res.n + ',len=' + res.len + ',ok=' + res.ok + (res.replaced ? ',replaced=1' : '') + (res.why ? ',why=' + diagTok(res.why, 80) : ''));
+        } catch (_) {}
+    };
+    try {
+        if (!guardSP()) { res.why = 'multiplayer'; crumb('refuse'); return res; }
+        if ((kind !== 'n' && kind !== 'rm') || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) { res.why = 'bad-args'; crumb('refuse'); return res; }
+        const c = rwCfg(true);
+        if (!c.cfg || typeof c.cfg.setValue !== 'function') { res.why = c.cfg ? 'no-setValue' : c.why; crumb('refuse'); return res; }
+        const g = rwGet(RW_KEY_QUEUE);
+        if (!g.ok) { res.why = 'read:' + g.why; crumb('refuse'); return res; }
+        const p = rwQueueParse(g.val);
+        if (!p.ok) { res.why = p.why; crumb('refuse'); return res; }      // a value this panel doesn't know: never overwrite it
+        const entry = (kind === 'n') ? 'n:' + x + ':' + y + ':' + w : 'rm:' + x + ':' + y;
+        res.entry = entry;
+        const kept = p.entries.filter((e) => { const it = rwEntryInfo(e); return !(it && it.x === x && it.y === y); });
+        res.replaced = kept.length !== p.entries.length;
+        const next = kept.concat([entry]);
+        const val = RW_QUEUE_VER + '|' + next.join('|');
+        res.n = next.length; res.len = val.length;
+        if (next.length > RW_QUEUE_MAX || val.length > RW_QUEUE_MAX_CHARS) {
+            res.n = p.entries.length; res.len = g.val.length; res.why = 'cap';
+            crumb('refuse');
+            return res;
+        }
+        c.cfg.setValue(RW_KEY_QUEUE, val);
+        const back = rwGet(RW_KEY_QUEUE);
+        res.ok = back.ok && back.val === val;
+        if (!res.ok) res.why = back.ok ? 'readback-mismatch' : 'readback:' + back.why;
+        crumb('add');
+        if (res.ok) { _rw.cache = null; rwPollStart(); }
+    } catch (e) { res.ok = false; res.why = 'threw:' + revealErrText(e); crumb('add'); }
+    return res;
+}
+
+// A plot from LCP_RW_LAST: a plot index (as the writer stores it) or, defensively, [x,y] / {x,y} / 'x/y'.
+function rwLoc(v, W) {
+    try {
+        if (Array.isArray(v)) return (v.length >= 2 && Number.isInteger(v[0]) && Number.isInteger(v[1]) && v[0] >= 0 && v[1] >= 0) ? { x: v[0], y: v[1] } : null;
+        if (v && typeof v === 'object') return (Number.isInteger(v.x) && Number.isInteger(v.y) && v.x >= 0 && v.y >= 0) ? { x: v.x, y: v.y } : null;
+        if (typeof v === 'string') { const m = /^(\d+)[\/:,](\d+)$/.exec(v); return m ? { x: +m[1], y: +m[2] } : null; }
+        if (Number.isInteger(v) && v >= 0) {
+            try {
+                if (typeof GameplayMap !== 'undefined' && typeof GameplayMap.getLocationFromIndex === 'function') {
+                    const l = GameplayMap.getLocationFromIndex(v);
+                    if (l && Number.isInteger(l.x) && Number.isInteger(l.y) && l.x >= 0 && l.y >= 0) return { x: l.x, y: l.y };
+                }
+            } catch (_) {}
+            if (W > 0) return { x: v % W, y: Math.floor(v / W) };
+        }
+    } catch (_) {}
+    return null;
+}
+function rwNum(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+function rwNormLast(o, W) {
+    const L = { seq: rwNum(o.seq), turn: rwNum(o.turn), at: rwNum(o.at), wroteN: rwNum(o.wroteN), removedN: rwNum(o.removedN),
+        pendN: rwNum(o.pendN), enclosedN: rwNum(o.enclosedN), failN: rwNum(o.failN), lakeN: Array.isArray(o.lake) ? o.lake.length : 0,
+        distrust: o.x === 1,
+        wrote: [], removed: [], fail: [], refused: [] };
+    const locs = (arr, cap) => { const out = []; if (Array.isArray(arr)) for (const v of arr.slice(0, cap)) { const l = rwLoc(v, W); if (l) out.push(l); } return out; };
+    L.wrote = locs(o.wrote, 400);
+    L.removed = locs(o.removed, 200);
+    if (Array.isArray(o.fail)) for (const f of o.fail.slice(0, 40)) {
+        if (!Array.isArray(f)) continue;
+        const l = rwLoc(f[0], W);
+        if (l) L.fail.push({ x: l.x, y: l.y, why: String(f[1] == null ? '?' : f[1]).slice(0, 80) });
+    }
+    if (Array.isArray(o.refused)) for (const r of o.refused.slice(0, 40)) {
+        if (Array.isArray(r) && Number.isInteger(r[0]) && Number.isInteger(r[1])) L.refused.push({ x: r[0], y: r[1], why: String(r[2] == null ? '?' : r[2]).slice(0, 80) });
+    }
+    if (L.wroteN == null) L.wroteN = L.wrote.length;
+    if (L.removedN == null) L.removedN = L.removed.length;
+    if (L.failN == null) L.failN = L.fail.length;
+    return L;
+}
+// LCP_RW_LAST, parsed once per distinct value (and map width): {last (normalised) | null, why}.
+function rwLastRead(W) {
+    const g = rwGet(RW_KEY_LAST);
+    if (!g.ok || !g.val) { _rw.lastRaw = null; _rw.last = null; return { last: null, why: g.ok ? 'empty' : g.why }; }
+    const sig = W + '|' + g.val;
+    if (sig === _rw.lastRaw) return { last: _rw.last, why: _rw.last ? '' : 'bad-json' };
+    let o = null;
+    try { o = JSON.parse(g.val); } catch (_) { o = null; }
+    _rw.last = (o && typeof o === 'object' && !Array.isArray(o) && o.v === 1) ? rwNormLast(o, W) : null;
+    _rw.lastRaw = sig;
+    return { last: _rw.last, why: _rw.last ? '' : 'bad-json' };
+}
+function rwWidth() { try { return GameplayMap.getGridWidth() | 0; } catch (_) { return 0; } }
+// The watcher's heartbeat global: running (fresh) / stopped (seen, now stale, or stopped cleanly) / unknown (never seen
+// in this module). With its status companion: wst = 'ok' | 'refused' | 'failing' (what the running writer is doing).
+function rwHeartbeat(now) {
+    let hb = null, sc = null;
+    try {
+        const g = (typeof globalThis !== 'undefined') ? globalThis.__lcpRiverWriter : undefined;
+        if (g && typeof g === 'object' && typeof g.hb === 'number' && isFinite(g.hb)) hb = g;
+        const c = (typeof globalThis !== 'undefined') ? globalThis.__lcpRiverWriterSt : undefined;
+        if (hb && c && typeof c === 'object' && c.v === 1 && c.pid === hb.pid) sc = c;
+    } catch (_) {}
+    if (!hb) return { state: _rw.hbSeen ? 'stopped' : 'unknown', age: null, dry: false, seq: null, wst: null, why: '' };
+    _rw.hbSeen = true;
+    const age = now - hb.hb;
+    let fresh = age > -RW_HB_FRESH_MS && age < RW_HB_FRESH_MS;
+    // a run in progress keeps the heartbeat fresh until `until` (the watcher refreshes it at the start and end of a run)
+    if (!fresh && sc && typeof sc.until === 'number' && isFinite(sc.until) && now < sc.until && sc.until - now < 120000) fresh = true;
+    if (sc && sc.st === 'stopped') fresh = false;
+    const wst = (sc && (sc.st === 'refused' || sc.st === 'failing')) ? sc.st : (sc ? 'ok' : null);
+    return { state: fresh ? 'running' : 'stopped', age: Math.round(age), dry: hb.mode === 'dry', seq: rwNum(hb.seq), wst,
+        why: (sc && typeof sc.why === 'string') ? sc.why.slice(0, 160) : '' };
+}
+function rwStatusCrumbs(st) {
+    try {
+        const L = st.last, q = st.queue || { ok: false, entries: [], why: '?' };
+        const sig = [st.state, st.dry ? 1 : 0, st.wst || '-', L ? L.seq : '-', L ? L.wroteN : '-', L ? L.pendN : '-', st.unconfirmed, st.real, q.ok ? q.entries.length : 'x'].join('|');
+        if (sig !== _rw.statusSig) {
+            _rw.statusSig = sig;
+            diag('rw.status:seq=' + (L ? diagTok(L.seq, 12) : 'none') + ',wroteN=' + (L ? diagTok(L.wroteN, 8) : 0) + ',pendN=' + (L ? diagTok(L.pendN, 8) : 0)
+                + ',unconfirmed=' + st.unconfirmed + ',real=' + st.real + ',state=' + st.state + ',dry=' + (st.dry ? 1 : 0) + ',wst=' + diagTok(st.wst || '-', 12)
+                + ',hbAge=' + (st.hbAge == null ? 'none' : st.hbAge) + ',q=' + (q.ok ? q.entries.length : 'x') + (q.ok ? '' : ',qWhy=' + diagTok(q.why, 60))
+                + (st.lastWhy && st.lastWhy !== 'empty' ? ',lastWhy=' + diagTok(st.lastWhy, 60) : '') + ',beforeLoad=' + (st.beforeLoad ? 1 : 0) + ',inst=' + _paintCtxInst);
+        }
+        // rw.confirm, once per run seq in this module instance: after a save & load, real should equal wrote.
+        if (L && L.wrote.length && L.seq !== _rw.confirmSeq) {
+            _rw.confirmSeq = L.seq;
+            const still = L.wrote.filter((l) => st.writtenKeys.has(l.x + ',' + l.y));
+            diag('rw.confirm:seq=' + diagTok(L.seq, 12) + ',wrote=' + L.wrote.length + ',real=' + st.real + ',stillNo=' + still.length + ',beforeLoad=' + (st.beforeLoad ? 1 : 0)
+                + (still.length ? ',stillNoAt=' + still.slice(0, 6).map((l) => l.x + '/' + l.y).join(';') : ''));
+        }
+    } catch (_) { /* logging must never throw */ }
+}
+
+/**
+ * River writer status: {state:'running'|'stopped'|'unknown', dry, hbAge, hbSeq, last (LCP_RW_LAST, normalised) | null,
+ * queue (rwQueueRead), writtenKeys (Set 'x,y' of tiles the writer wrote that this context still reads without navigable
+ * river data), unconfirmed, real, beforeLoad (the last run is older than this module instance)}. Read fresh unless
+ * opts.cached (the Map-tab hover: up to 1 s old); opts.log logs the queue read. opts.fresh is accepted (the default). Never throws.
+ */
+export function getRiverWriterStatus(opts = {}) {
+    const now = Date.now();
+    if (opts.cached && !opts.fresh && !opts.log && _rw.cache && now - _rw.cacheAt < RW_CACHE_MS) return _rw.cache;
+    const st = { state: 'unknown', dry: false, wst: null, why: '', hbAge: null, hbSeq: null, last: null, lastWhy: '', queue: null, writtenKeys: new Set(),
+        real: 0, unconfirmed: 0, beforeLoad: false, maps: null, at: now };
+    try {
+        const hb = rwHeartbeat(now);
+        st.state = hb.state; st.dry = hb.dry; st.hbAge = hb.age; st.hbSeq = hb.seq; st.wst = hb.wst; st.why = hb.why;
+        const lr = rwLastRead(rwWidth());
+        st.last = lr.last; st.lastWhy = lr.why;
+        st.queue = rwQueueRead(!!opts.log);
+        if (st.last) {
+            st.beforeLoad = st.last.at != null && st.last.at < _rwT0;
+            const nav = paintRiverNav();
+            // review RW-5: a tile in both lists (an older LAST) counts as removed, never as "written: save & load to see it"
+            const rmKeys = new Set(st.last.removed.map((l) => l.x + ',' + l.y));
+            for (const l of st.last.wrote) {
+                if (rmKeys.has(l.x + ',' + l.y)) continue;
+                if (paintRiverRaw(l) === nav) st.real++;
+                else { st.unconfirmed++; st.writtenKeys.add(l.x + ',' + l.y); }
+            }
+        }
+        rwStatusCrumbs(st);
+    } catch (e) { st.err = revealErrText(e); try { diag('rw.status:err=' + diagTok(st.err, 120)); } catch (_) {} }
+    _rw.cache = st; _rw.cacheAt = now;
+    return st;
+}
+
+/**
+ * What the river writer did / will do at one tile (for the Map-tab hover), or null when nothing: {state, dry, written,
+ * removed, fail (run info {seq, turn, at, beforeLoad} or null), queued ('n' | 'rm' | null), refused (why code),
+ * refusedText, failWhy, failText (the code as text, review RW-9)}. Uses the 1 s status cache (hover). Never throws.
+ */
+export function getRiverWriterTileInfo(x, y) {
+    try {
+        const st = getRiverWriterStatus({ cached: true });
+        if (!st.maps) {
+            const M = { queue: new Map(), removed: new Set(), refused: new Map(), fail: new Map() };
+            if (st.queue && st.queue.ok) for (const it of st.queue.items) M.queue.set(it.x + ',' + it.y, it.kind);
+            if (st.last) {
+                for (const l of st.last.removed) M.removed.add(l.x + ',' + l.y);
+                for (const r of st.last.refused) M.refused.set(r.x + ',' + r.y, r.why);
+                for (const f of st.last.fail) M.fail.set(f.x + ',' + f.y, f.why);
+            }
+            st.maps = M;
+        }
+        const M = st.maps, L = st.last, k = x + ',' + y;
+        const run = L ? { seq: L.seq, turn: L.turn, at: L.at, beforeLoad: st.beforeLoad } : null;
+        const info = { state: st.state, dry: st.dry, written: st.writtenKeys.has(k) ? run : null, queued: M.queue.get(k) || null,
+            removed: M.removed.has(k) ? run : null, refused: M.refused.get(k) || null, refusedText: '', fail: M.fail.has(k) ? run : null, failWhy: M.fail.get(k) || '' };
+        if (info.refused) info.refusedText = RW_WHY[info.refused] || info.refused;
+        info.failText = info.fail ? rwFailText(info.failWhy) : '';
+        if (!info.written && !info.queued && !info.removed && !info.refused && !info.fail) return null;
+        return info;
+    } catch (_) { return null; }
+}
+
+// ── River writer copy (running / dry-run / not running / unknown) ──
+// " (it is running now)" etc., for the explanations that mention the river writer once.
+// " (see its Terminal window: <why>)" for a running writer whose runs are refused or failing (review RW-3).
+function rwTroubleText(st) {
+    if (!st || st.state !== 'running' || (st.wst !== 'refused' && st.wst !== 'failing')) return '';
+    return st.wst === 'refused' ? 'refusing to write' + (st.why ? ': ' + st.why : '') : 'its last run failed' + (st.why ? ': ' + st.why : '');
+}
+function rwHintClause(st) {
+    const s = st ? st.state : 'unknown';
+    const trouble = rwTroubleText(st);
+    if (s === 'running' && trouble) return ' (it is running, but ' + trouble + '; see its Terminal window)';
+    if (s === 'running') return st.dry ? ' (it is running in dry-run mode, so it writes nothing)' : ' (it is running now)';
+    if (s === 'stopped') return ' (it is not running: start it in Terminal with  ' + RIVER_WRITER_START_CMD + ')';
+    return ' (the panel can\'t tell whether it is running; to start it, run  ' + RIVER_WRITER_START_CMD + '  in Terminal)';
+}
+// What happens to a queued paint next, as its own sentence.
+function rwWhenText(st) {
+    const s = st ? st.state : 'unknown';
+    const trouble = rwTroubleText(st);
+    if (s === 'running' && trouble) return 'The river writer is running, but ' + trouble + ' (see its Terminal window), so it may not write it; once it has written it, save & load to see the river';
+    if (s === 'running') return st.dry ? 'The river writer is running in dry-run mode and writes nothing; after a real run, save & load to see the river'
+                                       : 'The river writer is running and should write it within a few seconds; then save & load to see the river';
+    if (s === 'stopped') return 'The river writer is not running (start it in Terminal with  ' + RIVER_WRITER_START_CMD + '); after it has run, save & load to see the river';
+    return 'After the river writer has run, save & load to see the river (the panel can\'t tell whether it is running)';
+}
+function rwQueuedText(q, st) {
+    if (q && q.ok) return 'The tile is queued for the river writer. ' + rwWhenText(st);
+    const head = (q && q.why === 'cap') ? 'The panel could not queue this tile (the river writer queue is full, ' + RW_QUEUE_MAX + ' edits)' : 'The panel could not queue this tile (see UI.log)';
+    return head + '; the river writer still finds it by scanning the map but won\'t join it to another river. ' + rwWhenText(st);
+}
+function rwRemoveTail(st) {
+    const s = st ? st.state : 'unknown';
+    const trouble = rwTroubleText(st);
+    if (s === 'running' && trouble) return '; the river writer is running, but ' + trouble + ' (see its Terminal window)';
+    if (s === 'running') return st.dry ? '; the river writer is running in dry-run mode, so it won\'t remove it' : '; the river writer is running and should remove it within a few seconds';
+    if (s === 'stopped') return '; the river writer is not running (start it in Terminal with  ' + RIVER_WRITER_START_CMD + ')';
+    return '; the panel can\'t tell whether the river writer is running';
+}
+// What the river writer's records (LCP_RW_LAST, st = getRiverWriterStatus) say about one tile, for the paint results
+// (review PANEL-UNDO-1 / PANEL-REPAINT-2 / PANEL-LATE-3): written = it wrote navigable river data here that this
+// context does not read yet (st.writtenKeys: wrote[] minus removed[] minus tiles the UI already reads as navigable);
+// removed = its latest action here was a removal (LCP_RW_LAST.removed; a tile in both lists counts as removed, RW-5).
+// {written, removed, seq}; all false / null without records. Never throws.
+function rwTileFacts(loc, st) {
+    const out = { written: false, removed: false, seq: null };
+    try {
+        if (!st || !loc) return out;
+        out.written = !!(st.writtenKeys && st.writtenKeys.has(loc.x + ',' + loc.y));
+        out.removed = !!(st.last && Array.isArray(st.last.removed) && st.last.removed.some((l) => l.x === loc.x && l.y === loc.y));
+        out.seq = st.last ? st.last.seq : null;
+    } catch (_) {}
+    return out;
+}
+// Has the river writer written river data at loc that this context can't read yet? (paintPlan's river check.) Never throws.
+function rwWrittenHere(loc) {
+    try { return rwTileFacts(loc, getRiverWriterStatus({ fresh: true })).written; } catch (_) { return false; }
+}
+function rwSeqText(seq) { return (seq == null) ? '?' : String(seq); }
+// The queue entry's W flag: the old terrain was water (unknown counts as water: such a tile never joins an existing river).
+function rwWasWater(oldT, rc) {
+    try { const row = oldT ? paintRules().terr[oldT] : null; if (row) return !!row.water; } catch (_) {}
+    return (rc && typeof rc.beforeWater === 'boolean') ? rc.beforeWater : true;
+}
+// Can River > Remove river clear river data on this terrain? (not on water, mountain or Navigable River terrain)
+function rwRemovableTerr(type) {
+    try {
+        if (!type || type === 'TERRAIN_NAVIGABLE_RIVER') return false;
+        const row = paintRules().terr[type];
+        return !!row && !row.water && !row.mountain;
+    } catch (_) { return false; }
+}
+
+/**
+ * The Creative tab's 'River writer' lines: {tone:'ok'|'warn'|'bad'|'muted', line, notes:[...]}. Never claims a river is
+ * drawn: written tiles are reported as 'save & load to see them'.
+ */
+export function describeRiverWriterStatus(st) {
+    try {
+        st = st || getRiverWriterStatus();
+        const L = st.last;
+        const lastText = L ? 'last run #' + (L.seq == null ? '?' : L.seq) + ' wrote ' + rwPlural(L.wroteN, 'tile')
+            + (L.removedN ? ' and removed the river data of ' + rwPlural(L.removedN, 'tile') : '') : '';
+        let tone, line;
+        const trouble = rwTroubleText(st);
+        if (st.state === 'running' && trouble) {
+            tone = 'warn';
+            line = 'River writer: running, but ' + trouble + ' (see its Terminal window)' + (L ? '; ' + lastText : '');
+        }
+        else if (st.state === 'running' && !st.dry) { tone = 'ok'; line = 'River writer: running, ' + (L ? lastText : 'no run recorded in this game yet'); }
+        else if (st.state === 'running') { tone = 'warn'; line = 'River writer: running in dry-run mode (it reports what it would write but writes nothing)' + (L ? '; ' + lastText : ''); }
+        else if (st.state === 'stopped') { tone = 'bad'; line = 'River writer: not running (it normally starts with the game): start it in Terminal with  ' + RIVER_WRITER_START_CMD; }
+        else {
+            tone = 'muted';
+            const ago = (L && L.at) ? Math.max(0, Math.round((Date.now() - L.at) / 60000)) : null;
+            line = 'River writer: status unknown (the panel can\'t see its heartbeat)'
+                + (L ? '; ' + lastText + (L.at ? ' at ' + rwClock(L.at) + ' (' + ago + ' min ago)' : '') : '; no run recorded in this game')
+                + '. If it isn\'t running, start it in Terminal with  ' + RIVER_WRITER_START_CMD;
+        }
+        const notes = [];
+        const q = st.queue;
+        if (q && q.ok && q.entries.length) {
+            notes.push('Queued for the river writer: ' + [q.n ? rwPlural(q.n, 'painted tile') : '', q.rm ? rwPlural(q.rm, 'river removal') : '', q.other ? rwPlural(q.other, 'other entry') : '']
+                .filter(Boolean).join(', ') + '.');
+        } else if (q && !q.ok) notes.push('The panel can\'t read the river writer queue (' + q.why + ').');
+        if (st.unconfirmed) {
+            notes.push(rwPlural(st.unconfirmed, 'tile') + ' written by the river writer: save & load to see ' + (st.unconfirmed === 1 ? 'it' : 'them') + ' as rivers'
+                + (st.beforeLoad ? ' (if you have already saved & loaded since run #' + (L.seq == null ? '?' : L.seq) + ' and still see this, the game did not keep them: see the river writer log)' : '') + '.');
+        }
+        if (L && L.pendN) {
+            const one = L.pendN === 1;
+            notes.push(rwPlural(L.pendN, 'painted tile') + (one ? ' has' : ' have') + ' no sea, lake or river to flow into yet, so ' + (one ? 'its' : 'their')
+                + ' river ends on land for now (paint on to the water to join ' + (one ? 'it' : 'them') + ' up).');
+        }
+        if (L && L.enclosedN) notes.push(rwPlural(L.enclosedN, 'painted tile') + (L.enclosedN === 1 ? ' had nowhere to flow and was' : ' had nowhere to flow and were') + ' not written.');
+        if (L && L.failN) {
+            // review RW-9: say what each failure is; only 'readback' codes are writes that did not read back
+            const groups = new Map();
+            for (const f of L.fail) { const t = rwFailText(f.why).replace(/ \(.*\)$/, ''); groups.set(t, (groups.get(t) || 0) + 1); }
+            const listed = [...groups.values()].reduce((a, b) => a + b, 0);
+            const parts = [...groups.entries()].map(([t, n]) => (n > 1 ? n + 'x ' : '') + t);
+            if (L.failN > listed) parts.push((L.failN - listed) + ' more (see the river writer log)');
+            notes.push('Last run problems: ' + (parts.length ? parts.join('; ') : rwPlural(L.failN, 'problem') + ' (see the river writer log)') + '.');
+        }
+        if (L && L.distrust) notes.push('The river writer lost its records for this game once, so it no longer joins new rivers to existing ones it cannot trace (see the river writer log).');
+        if (L && L.refused.length) {
+            notes.push('The last run did not remove: ' + L.refused.slice(0, 3).map((r) => '(' + r.x + ',' + r.y + ') because ' + (RW_WHY[r.why] || r.why)).join('; ')
+                + (L.refused.length > 3 ? '; and ' + (L.refused.length - 3) + ' more' : '') + '.');
+        }
+        return { tone, line, notes };
+    } catch (e) { return { tone: 'muted', line: 'River writer: status unavailable (' + revealErrText(e) + ').', notes: [] }; }
+}
+
+// River > Remove river (queued): refuse what the writer can't do, else queue an 'rm' entry. Writes nothing itself.
+function rwRemoveRiverAt(id, type, loc) {
+    if (type !== RIVER_REMOVE) return paintResult('refused', 'Unknown river tool ' + type + '.');
+    const s = paintPlotState(loc);
+    let T = null;
+    try { T = s.terr ? paintRules().terr[s.terr] : null; } catch (_) {}
+    let mountain = !!(T && T.mountain);
+    try { if (!mountain && GameplayMap.isMountain(loc.x, loc.y)) mountain = true; } catch (_) {}
+    const water = !!((T && T.water) || s.water);
+    let st = null;
+    try { st = getRiverWriterStatus({ fresh: true }); } catch (_) {}
+    const k = loc.x + ',' + loc.y;
+    const writtenHere = !!(st && st.writtenKeys.has(k));
+    const removedHere = !!(st && st.last && st.last.removed.some((l) => l.x === loc.x && l.y === loc.y));
+    const word = paintRiverWord(s.riverType);
+    diag('rw.remove:' + id + ',@' + loc.x + '/' + loc.y + ',terr=' + diagTok(s.terr, 40) + ',river=' + s.riverType + ',water=' + water + ',mountain=' + mountain
+        + ',written=' + (writtenHere ? 1 : 0) + ',removed=' + (removedHere ? 1 : 0) + ',state=' + (st ? st.state : '?'));
+    if (s.terr === 'TERRAIN_NAVIGABLE_RIVER') return paintResult('refused', paintAt(loc) + ' is Navigable River terrain: paint the tile\'s terrain away first, then remove the river data.');
+    // review PANEL-UNDO-1: river data the river writer wrote on a tile later painted to water / mountain can still go:
+    // the refusal says how (paint land, remove, let the writer run, paint it back) instead of a dead end. Only for the
+    // writer's own data: a game river's reading on a water tile can be a lake / coast inflow, which this must not suggest
+    // stripping (fail closed).
+    if (water || mountain) return paintResult('refused', 'The game can\'t remove river data from water or mountain tiles (' + paintAt(loc) + ' is ' + paintName(s.terr) + ').'
+        + (writtenHere ? ' To remove the navigable river data the river writer wrote here, paint the tile land (e.g. Flat) first, use Remove river (queued) there, let the river writer run, then paint ' + (s.terr ? paintName(s.terr) : 'the old terrain') + ' back.' : ''));
+    if (removedHere && word !== 'none') {
+        return paintResult('warn', 'The river writer already removed the river data at ' + paintAt(loc) + ' (run #' + (st.last.seq == null ? '?' : st.last.seq)
+            + '); the 3D map drops the river after a save & load.', { plots: [loc] });
+    }
+    if (word === 'none' && !writtenHere) return paintResult('refused', 'No river here: the game has no river data at ' + paintAt(loc) + '.');
+    const q = rwQueueAdd('rm', loc, null);
+    if (!q.ok) {
+        if (q.why === 'cap') return paintResult('refused', 'The river writer queue is full (' + RW_QUEUE_MAX + ' edits); let the river writer run first, then try again.');
+        return paintResult('fail', 'The panel could not queue the river removal at ' + paintAt(loc) + ' (' + q.why + '); see UI.log.');
+    }
+    const what = writtenHere ? 'the navigable river the river writer wrote' : (word === 'unknown' ? 'the river (the panel could not read the river data here; the writer checks it)' : 'the ' + word + ' river');
+    return paintResult('warn', 'Remove ' + what + ' at ' + paintAt(loc) + ' — queued: the river stays until the river writer has run and you have saved & loaded'
+        + rwRemoveTail(st) + '.', { plots: [loc] });
+}
+
+// While the queue is not empty, look for a new LCP_RW_LAST every RW_POLL_MS (bounded) so the overlay shows the writer's
+// result without waiting for a turn / paint. Restarted by every queue add; one timer at most.
+function rwPollKey() { const lr = rwLastRead(rwWidth()); return lr.last ? (lr.last.seq + ':' + lr.last.at) : 'none'; }
+function rwPollStart() {
+    try {
+        _rw.pollN = 0;
+        if (_rw.pollTimer != null) return;
+        _rw.pollKey = rwPollKey();
+        const tick = () => {
+            _rw.pollTimer = null;
+            let key = 'none', qn = 0;
+            try { key = rwPollKey(); const q = rwQueueRead(false); qn = q.ok ? q.entries.length : 0; } catch (_) {}
+            const changed = key !== _rw.pollKey;
+            _rw.pollKey = key;
+            _rw.pollN++;
+            if (changed) {
+                _rw.cache = null;
+                diag('rw.poll:changed=1,key=' + diagTok(key, 40) + ',q=' + qn + ',ticks=' + _rw.pollN);
+                proSchedule('rw-result', 0);
+            }
+            if (qn > 0 && _rw.pollN < RW_POLL_MAX) _rw.pollTimer = setTimeout(tick, RW_POLL_MS);
+        };
+        _rw.pollTimer = setTimeout(tick, RW_POLL_MS);
+    } catch (e) { try { diag('rw.poll:err=' + diagTok(revealErrText(e), 120)); } catch (_) {} }
+}
+// The writer may also fire engine.trigger('lcp-river-writer', {seq}) in its context; if that reaches this one, redraw.
+function rwHookEvent() {
+    if (_rw.hooked) return;
+    _rw.hooked = true;
+    try {
+        if (typeof engine === 'undefined' || !engine || typeof engine.on !== 'function') return;
+        engine.on(RW_EVENT, (d) => {
+            try { _rw.cache = null; diag('rw.event:seq=' + diagTok(d && d.seq, 12) + ',inst=' + _paintCtxInst); proSchedule('rw-event', 0); } catch (_) {}
+        });
+        diag('rw.hook:event=' + RW_EVENT + ',inst=' + _paintCtxInst);
+    } catch (e) { try { diag('rw.hook:failed,' + diagTok(revealErrText(e), 120)); } catch (_) {} }
+}
+
 // ─── PAINTED-RIVER STAND-IN OVERLAY (2026-11-02, river investigation candidate #3) ─────────────────────────
-// A painted TERRAIN_NAVIGABLE_RIVER is never drawn as a river: the 3D map draws rivers from river data that setTerrain
-// does not write (see PAINT_RIVER_WARNING). So the panel marks such tiles itself: a semi-transparent water-blue hex with
-// an orange edge on every REVEALED tile whose terrain is navigable river but whose river data is not RIVER_NAVIGABLE
+// A painted TERRAIN_NAVIGABLE_RIVER is not drawn as a river by the paint: the 3D map draws rivers from river data that
+// setTerrain does not write (see paintRiverWarning). So the panel marks such tiles itself: a semi-transparent water-blue hex
+// with an orange edge on every REVEALED tile whose terrain is navigable river but whose river data is not RIVER_NAVIGABLE
 // (the rule the Map tab minimap uses for its "Painted river" mark). Data-derived: nothing is stored about the tiles;
 // every refresh re-reads GameplayMap, so the marks come back after Reload UI / save & load once a refresh runs again.
+// 2026-11-03: tiles the river writer has written (LCP_RW_LAST, see RIVER WRITER) keep the mark with a GREEN edge until a
+// save & load, because this context reads their new river data only after loading; then they drop out of the scan.
 //
 // Overlay API (names copied from shipped JS, not from memory): WorldUI.createOverlayGroup(name, priority) →
 // group.addPlotOverlay() → overlay.addPlots(plotIndices, { fillColor, edgeColor }); group.clearAll() + overlay.clear()
@@ -2984,6 +3671,9 @@ const PRO_GROUP_NAME = 'LcpPaintedRiverOverlayGroup';
 const PRO_PRIORITY = 1;                                         // OVERLAY_PRIORITY.HEX_GRID (see above)
 const PRO_FILL = { x: 0.10, y: 0.45, z: 0.95, w: 0.45 };        // water blue, semi-transparent
 const PRO_EDGE = { x: 1.00, y: 0.70, z: 0.28, w: 0.95 };        // orange #ffb347, the Map tab's "Painted river" mark
+// 2026-11-03: a painted tile the river writer has written (LCP_RW_LAST.wrote) that this context still reads without
+// navigable river data keeps the same fill with this green edge until a save & load (the UI sees the data only then).
+const PRO_EDGE_WRITTEN = { x: 0.25, y: 0.86, z: 0.40, w: 0.95 }; // green, "written: save & load to see it"
 const PRO_SETTING = 'paintedRiverOverlay';                      // modSettings.localCheatPanel.paintedRiverOverlay
 const PRO_DEFAULT_ON = true;
 const PRO_EVENT = 'lcp-painted-river-overlay';                  // custom UI event (cross-context safety net only)
@@ -2998,7 +3688,7 @@ const _pro = {
     timer: null, due: 0, reasons: [],
     hiddenKeys: null,                                           // Set of 'x,y' painted tiles hidden by fog at the last refresh
     shownKeys: null,                                            // Set of 'x,y' tiles marked at the last refresh
-    last: { ok: null, on: null, count: 0, hidden: 0, why: '', at: 0 },
+    last: { ok: null, on: null, count: 0, hidden: 0, written: 0, why: '', at: 0 },
     lastLogSig: '', runs: 0,
 };
 
@@ -3006,7 +3696,7 @@ const _pro = {
 export function isPaintedRiverOverlayEnabled() {
     return getLcpSetting(PRO_SETTING, PRO_DEFAULT_ON) !== false;
 }
-/** Last refresh outcome for the Creative tab label: {on, ok, count, hidden, why, at}. */
+/** Last refresh outcome for the Creative tab label: {on, ok, count, hidden, written, why, at} (written = green-edged). */
 export function getPaintedRiverOverlayState() {
     let on = true;
     try { on = isPaintedRiverOverlayEnabled(); } catch (_) {}
@@ -3160,19 +3850,20 @@ export function refreshPaintedRiverOverlay(reason) {
     const t0 = Date.now();
     const why = diagTok(reason || '?', 60);
     _pro.runs++;
-    let stage = 'start', W = 0, H = 0, scan = null, fog = 'skip', drawn = 'no';
+    let stage = 'start', W = 0, H = 0, scan = null, fog = 'skip', drawn = 'no', rwSeq = null;
     const finish = (r) => {
         r.ms = Date.now() - t0;
         try {
-            _pro.last = { ok: r.ok, on: r.on, count: r.count | 0, hidden: r.hidden | 0, why: r.why || '', at: Date.now() };
+            _pro.last = { ok: r.ok, on: r.on, count: r.count | 0, hidden: r.hidden | 0, written: r.written | 0, why: r.why || '', at: Date.now() };
             const at = (r.shown || []).slice(0, 6).map(f => f.x + '/' + f.y).join(';');
-            const sig = r.ok + '|' + r.on + '|' + r.count + '|' + r.hidden + '|' + at + '|' + (r.why || '');
+            const sig = r.ok + '|' + r.on + '|' + r.count + '|' + r.hidden + '|' + (r.written | 0) + '|' + at + '|' + (r.why || '');
             // a turn-start refresh that changed nothing stays out of UI.log (long games would fill it otherwise)
             if (!(why === 'turn' && sig === _pro.lastLogSig)) {
                 diag('paint.overlay:reason=' + why + ',on=' + r.on + ',ok=' + r.ok + ',count=' + (r.count | 0) + ',hidden=' + (r.hidden | 0)
                     + (scan ? ',navTerr=' + scan.navTerr + ',real=' + scan.real + ',unk=' + scan.unk + ',scanMs=' + scan.ms + (scan.errs ? ',readErrs=' + scan.errs : '') : '')
                     + ',ms=' + r.ms + ',map=' + W + 'x' + H + (W * H > PRO_BIG_PLOTS ? ',big=1' : '') + ',fog=' + diagTok(fog, 40) + ',drawn=' + drawn
                     + (at ? ',at=' + at : '') + ',run=' + _pro.runs + ',inst=' + _paintCtxInst
+                    + (rwSeq != null ? ',rwSeq=' + diagTok(rwSeq, 12) + ',rwWritten=' + (r.written | 0) : '')
                     + (r.why ? ',why=' + diagTok(r.why, 80) : '') + (r.err ? ',stage=' + stage + ',err=' + r.err : ''));
             }
             _pro.lastLogSig = sig;
@@ -3228,7 +3919,16 @@ export function refreshPaintedRiverOverlay(reason) {
         }
         _pro.hiddenKeys = hiddenList.length ? new Set(hiddenList.map(f => f.x + ',' + f.y)) : null;
         _pro.shownKeys = shown.length ? new Set(shown.map(f => f.x + ',' + f.y)) : null;
-        // STEP 5/5: redraw our own group (created on the first refresh that has something to draw)
+        // STEP 5/5: redraw our own group (created on the first refresh that has something to draw). Tiles the river writer
+        // has written (LCP_RW_LAST, re-read on every refresh that has tiles) get the green edge, the rest the orange one.
+        stage = 'rw';
+        let rwKeys = null;
+        if (shown.length) {
+            try { const rs = getRiverWriterStatus({ fresh: true }); if (rs.last) { rwSeq = (rs.last.seq == null) ? '?' : rs.last.seq; rwKeys = rs.writtenKeys; } } catch (_) { rwKeys = null; }
+        }
+        const isWritten = (f) => !!(rwKeys && rwKeys.has(f.x + ',' + f.y));
+        const writtenList = (rwKeys && rwKeys.size) ? shown.filter(isWritten) : [];
+        const plainList = writtenList.length ? shown.filter((f) => !isWritten(f)) : shown;
         stage = 'draw';
         if (!shown.length && !_pro.overlay) {
             drawn = 'nothing';                           // nothing to mark and nothing drawn yet: no group / plot overlay needed
@@ -3238,12 +3938,12 @@ export function refreshPaintedRiverOverlay(reason) {
             stage = 'draw';
             proClear();
             if (shown.length) {
-                const idx = shown.map(f => proPlotIndex(f.x, f.y, W));
-                _pro.overlay.addPlots(idx, { fillColor: PRO_FILL, edgeColor: PRO_EDGE });
+                if (plainList.length) _pro.overlay.addPlots(plainList.map(f => proPlotIndex(f.x, f.y, W)), { fillColor: PRO_FILL, edgeColor: PRO_EDGE });
+                if (writtenList.length) _pro.overlay.addPlots(writtenList.map(f => proPlotIndex(f.x, f.y, W)), { fillColor: PRO_FILL, edgeColor: PRO_EDGE_WRITTEN });
                 drawn = 'yes';
             } else drawn = 'cleared';
         }
-        return finish({ ok: true, on: true, count: shown.length, hidden: hiddenList.length, shown });
+        return finish({ ok: true, on: true, count: shown.length, hidden: hiddenList.length, written: writtenList.length, shown });
     } catch (e) {
         ERR('refreshPaintedRiverOverlay failed at', stage, e);
         return finish({ ok: false, on: null, count: 0, hidden: 0, why: 'threw', err: paintErrText(e) });
@@ -3287,7 +3987,10 @@ export function initPaintedRiverOverlay(tag) {
     };
     const start = () => {
         try { proHookEvents(); } catch (e) { try { diag('paint.overlay.err:stage=hook,' + paintErrText(e)); } catch (_) {} }
+        try { rwHookEvent(); } catch (_) { /* the river writer hook must never break the marker */ }
         attempt(0);
+        // Edits queued before this load / Reload UI: watch for the writer's result so the green edge shows promptly.
+        try { const q = rwQueueRead(false); if (q.ok && q.entries.length) rwPollStart(); } catch (_) {}
     };
     const later = () => { try { setTimeout(start, PRO_INIT_DELAY_MS); } catch (_) {} };
     try {

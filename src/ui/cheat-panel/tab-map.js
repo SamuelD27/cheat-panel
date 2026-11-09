@@ -13,6 +13,8 @@
  *       orange edge (orange dot at tiny zoom), a legend chip and a tooltip line. The thin navigable-river line is
  *       drawn only for navigable river data under other terrain (e.g. Flat painted over a real river), with its own
  *       legend bar "Navigable river (other terrain)" and tooltip line.
+ *     - River writer hover lines (2026-11-03): a tile the river writer has written ("shows after a save & load"),
+ *       one queued for it (paint or removal), one whose removal it refused or whose write did not read back.
  *     - Hover tooltip: shows terrain/biome/feature/resource/coords for the plot under the cursor.
  *     - Click-to-pan: clicking a plot pans the real game camera there (api.lookAtPlot, read-only).
  *     - Spotlight filter: multi-select the resources / natural wonders present on the map; when any
@@ -103,6 +105,32 @@ const RIVER_MINOR = '#7ec8e3', RIVER_NAV = '#4a90d0';
 const NAV_RIVER_TERRAIN = 'TERRAIN_NAVIGABLE_RIVER';
 const PAINTED_RIVER_MARK = '#ffb347';
 const isPaintedRiver = (p) => !!p && p.terr === NAV_RIVER_TERRAIN && p.river !== 2;
+
+// River writer hover lines (2026-11-03). api.getRiverWriterTileInfo says what the river writer did / will do at a tile
+// (LCP_RW_LAST + the LCP_RWQ queue). This UI context sees written river data only after a save & load, so a written tile
+// still reads "no river" here: its line replaces the orange "painted" line and never claims the river is drawn yet.
+const RW_OK = '#7ddc8f', RW_WAIT = '#e6b800', RW_BAD = '#ff7b6b';
+const rwEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function riverWriterTipLines(rw, p) {
+    const out = [];
+    if (!rw || !p) return out;
+    const span = (c, t) => '<span style="color:' + c + ';">' + t + '</span>';
+    const run = (r) => 'run #' + (r && r.seq != null ? rwEsc(r.seq) : '?') + (r && r.turn != null ? ', turn ' + rwEsc(r.turn) : '');
+    if (rw.written && p.river !== 2) {
+        out.push(span(RW_OK, 'River data written by the river writer (' + run(rw.written) + '); the 3D map shows it after a save &amp; load'
+            + (rw.written.beforeLoad ? '. If you have already saved &amp; loaded since that run and still see this line, the game did not keep it: see the river writer log' : '')));
+    }
+    if (rw.queued === 'n' && !rw.written) {
+        out.push(span(RW_WAIT, 'Queued for the river writer (not written yet'
+            + (rw.state === 'stopped' ? '; the river writer is not running' : (rw.state === 'running' && rw.dry) ? '; the river writer runs in dry-run mode' : '') + ')'));
+    }
+    if (rw.queued === 'rm') out.push(span(RW_WAIT, 'River data queued for removal: it stays until the river writer has run and you have saved &amp; loaded'));
+    if (rw.removed && p.river > 0) out.push(span(RW_OK, 'River data removed by the river writer (' + run(rw.removed) + '); the 3D map drops it after a save &amp; load'));
+    if (rw.refused) out.push(span(RW_BAD, 'The river writer did not remove this river: ' + rwEsc(rw.refusedText || rw.refused)));
+    // review RW-9: say what the failure is (only 'readback' codes are writes that did not read back)
+    if (rw.fail) out.push(span(RW_BAD, 'River writer, last run: ' + rwEsc(rw.failText || rw.failWhy || '?') + '; see the river writer log'));
+    return out;
+}
 
 // Feature shading — matched by substring so it survives the various exact FeatureType spellings.
 // [r,g,b, alpha] : the feature color is blended over the biome base at the given alpha.
@@ -595,6 +623,8 @@ const strip = (s, pfx) => (s && s.indexOf(pfx) === 0) ? s.slice(pfx.length) : (s
 export function renderMapTab(container) {
     if (!container) return;
     try { api.diagInit(container.ownerDocument || document); } catch (_) {}   // UI.log breadcrumb sink (see api.diag)
+    // River writer status, re-read on every Map-tab render (fills the hover cache; logs rw.status / rw.confirm on change).
+    try { api.getRiverWriterStatus({ fresh: true }); } catch (_) { /* never break the Map tab */ }
     const renderGen = ++_renderGen;   // see _renderGen — staleness token for this render's closures
 
     container.innerHTML = '';
@@ -1184,11 +1214,16 @@ export function renderMapTab(container) {
         else if (p.river === 2) parts.push('Navigable river');
         // River data under other terrain (e.g. Flat painted over a real river): the line on the minimap, still drawn in 3D.
         if (p.river === 2 && p.terr !== NAV_RIVER_TERRAIN) parts.push('Navigable river under other terrain (the 3D map still draws the river)');
-        // Navigable-river terrain without the game's river data = a painted tile (the 3D map draws no river there).
-        if (isPaintedRiver(p)) {
+        // River writer (2026-11-03): what it wrote / queued / refused here (cached ~1 s in api, so hover stays cheap).
+        let rw = null;
+        try { rw = api.getRiverWriterTileInfo(loc.x, loc.y); } catch (_) { rw = null; }
+        // Navigable-river terrain without the game's river data = a painted tile (the 3D map draws no river there). A tile
+        // the river writer has written also reads that way until a save & load; its own line below replaces this one.
+        if (isPaintedRiver(p) && !(rw && rw.written)) {
             parts.push('<span style="color:' + PAINTED_RIVER_MARK + ';">River terrain, but the game has '
                 + (p.river === 1 ? 'only a minor river' : 'no river') + ' here (painted)</span>');
         }
+        if (rw) { try { for (const l of riverWriterTipLines(rw, p)) parts.push(l); } catch (_) { /* hover must never throw */ } }
         if (_state.filters.fog && _fogView && _fogView.states) {
             const fs = _fogView.states[loc.y * snap.width + loc.x];
             parts.push('Fog: ' + (fs === 0 ? 'unexplored' : fs === 2 ? 'in sight' : 'explored'));

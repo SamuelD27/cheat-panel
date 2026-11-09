@@ -25,6 +25,14 @@ Keep this list current — it is the entire reason the two copies differ.
   state (the native, radius-limited claim). Quick check: `grep setOwnership` on the public copy
   should return nothing.
 
+- **River writer (2026-11-03)** — the panel side (LCP_RWQ queue, River > Remove river (queued), the Creative
+  "River writer" status line, the Map-tab writer hover lines) lives in `shared/api.js` (section RIVER WRITER) plus
+  `tab-creative.js`, `tab-map.js`, `paint-tile-mode.js`, and needs the Mac-side watcher in `scripts/river-writer/`
+  (tuner-based, private). It is **not shipped publicly**. The other three files are written to degrade when
+  `api.getRiverWriterStatus` is missing (tab-creative gates every river-writer line on it; tab-map and paint-tile-mode
+  reach it only through api calls inside try/catch), so a byte-copy next to the public `api.js` shows the pre-writer
+  UI. Quick check: `grep -c RIVER_WRITER_START_CMD` on the public `api.js` should print 0.
+
 Everything else is shared between the two copies.
 
 ## Workflow: making a change (the normal case)
