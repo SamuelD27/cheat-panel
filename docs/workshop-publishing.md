@@ -110,6 +110,7 @@ current tags ("Skipping tags"), but **Visibility is always applied**, and its de
 - [ ] VM clone at the same commit as `origin/master`; `dist-workshop` matches the manifest
 - [ ] Private test item passed the Mac test (section B)
 
-History: v3 was uploaded 2026-06-03 from the retired Windows Shadow PC. The 2026-10-18 `dist-workshop` (v2, dev
+History: v4 was uploaded 2026-11-09 14:31 from the VM (SDK Workshop Uploader, "Upload a new version" on
+3736063097, no private dry run by the owner's choice). v3 was uploaded 2026-06-03 from the retired Windows Shadow PC. The 2026-10-18 `dist-workshop` (v2, dev
 branding, no `criteria`) broke the game's mod list when placed in `Mods/`; it was never uploaded and is archived at
 `/Users/sd/Civ7/_staging/2026-11-09-release/dist-workshop-v2-old/`.

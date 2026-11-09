@@ -14,6 +14,8 @@ _Last updated: 2026-11-09. Read this first to resume work._
   `/Users/sd/Civ7/_staging/2026-11-09-release/dist-workshop-v2-old/`.
 - **Release:** from the VM clone `C:\civ7\cheat-panel` with the SDK Workshop Uploader. Steps, pre-release test and
   update notes: `docs/workshop-publishing.md` and `docs/release/v4-update-notes.md`.
+- **v4 is live:** the owner updated item 3736063097 on 2026-11-09 14:31 with "Upload a new version" (Public,
+  tags kept). No private dry run (owner's choice). The ledger's 3a rows shipped unconfirmed; check them in game.
 
 ## ▶ Current round (2026-11-05): natural-wonder remover + waterfall wonders that render
 

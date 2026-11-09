@@ -5,15 +5,20 @@ live in-game copy (`Mods/local-cheat-panel` → `src/`, symlink). Keep it curren
 
 | Tree | What it is | Where |
 |---|---|---|
-| **Released (v3)** | Workshop item **3736063097** "ALL MIGHTY SAM'S POWERS", uploaded 2026-06-03, Public, 2,006 current subscribers on 2026-11-09 | Steam (copy: `~/Library/Application Support/Steam/steamapps/workshop/content/1295660/3736063097`) |
+| **Released (v4)** | Workshop item **3736063097** "ALL MIGHTY SAM'S POWERS", v4 uploaded 2026-11-09 14:31 ("Upload a new version", Public, tags kept, 2,007 subscribers); v3 was 2026-06-03 | Steam (copy: `~/Library/Application Support/Steam/steamapps/workshop/content/1295660/3736063097`) |
 | **master** | v3 + every round proven in game, up to the 2026-11-03 river writer | GitHub `SamuelD27/cheat-panel` |
-| **Public v4 build** | the public subset of master, folder `dist-workshop/` (built by `scripts/build-workshop.sh c5f2c94`) | git `master`, VM `C:\civ7\cheat-panel\dist-workshop` |
+| **Public v4 build** | the public subset of master, folder `dist-workshop/` (built by `scripts/build-workshop.sh c5f2c94`); this is what the Workshop serves since 2026-11-09 | git `master`, VM `C:\civ7\cheat-panel\dist-workshop` |
 | **dev** | master + the 2026-11-05 wonders round (not proven yet) | local branch only; this is what the game loads |
 
 Evidence keys: ✅ **you** = you confirmed it in game; ✅ **log** = the game's UI.log or the river-writer log shows a
 successful real run; 🟡 = written and headless-tested, never confirmed in game; ⛔ = last report says it does not work.
 
-## 1. Already released (Workshop v3, 2026-06-03)
+## 1. Already released
+
+**v4, 2026-11-09:** every row of section 2 marked "Public v4: yes", plus the 3a rows below (shipped
+without an in-game confirmation, the owner chose a direct update with no private dry run).
+
+**v3, 2026-06-03:**
 
 - Player tab: gold, influence, yields. Research tab: instant research and civic.
 - Units tab: per-row heal, +XP, promote, delete, restore movement; infinite-movement toggle; duplicate.
@@ -23,7 +28,7 @@ successful real run; 🟡 = written and headless-tested, never confirmed in game
 - Creative tab: paint terrain, feature, resource, biome; Clear resource; single-tile natural wonders (partial).
 - Clean exit from paint/claim modes (Esc, right-click, banner button).
 
-**Broken for subscribers since the game updates** (fixed in v4): Creative paint and City Claim clicks do nothing on
+**Was broken for subscribers on v3 after the game updates** (fixed by v4, live since 2026-11-09): Creative paint and City Claim clicks do nothing on
 build 25516395 (input-handler contract change, fixed in `ce03415`); unit Delete silently fails on 1.4.1+
 (fixed in `d445670`).
 
@@ -49,8 +54,8 @@ Never public: the unlimited-territory Claim (`setOwnership`, dev build only), th
 
 ## 3. In development / not proven yet
 
-**3a. In master and in the v4 code, never confirmed in game.** Check them in the pre-release test
-(`docs/workshop-publishing.md`); drop a line from the update notes if one fails.
+**3a. In master and released in v4 (2026-11-09), never confirmed in game.** Confirm each in game; fix any
+that fails in v5 and correct the Workshop change note.
 
 | Feature | Commit | Evidence |
 |---|---|---|
