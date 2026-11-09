@@ -76,8 +76,8 @@ current tags ("Skipping tags"), but **Visibility is always applied**, and its de
    - Map: **Reveal map**, then **Restore fog**; **Teleport** a unit to a tile on its own continent; minimap rivers
      match the world;
    - there is no "River writer" line on the Creative tab (that is dev-only).
-4. Anything off: send `~/Library/Application Support/Civilization VII/Logs/UI.log` and `Modding.log`, and remove
-   the matching ⚑ line from the update notes.
+4. Anything off: send `~/Library/Application Support/Civilization VII/Logs/UI.log` and `Modding.log`, and drop the
+   matching line from the update notes (listed at the top of `docs/release/v4-update-notes.md`).
 5. Afterwards: unsubscribe the test item, re-enable what you normally use.
 
 ### C. The real update of item 3736063097

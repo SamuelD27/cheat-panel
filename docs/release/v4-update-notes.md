@@ -2,7 +2,7 @@
 
 Paste the **Change note** block into the uploader's change-note field (or, after the upload, on the item page:
 Change Notes → Edit). Steam renders the `[list]` / `[*]` / `[b]` tags as BBCode. Before pasting, delete any line
-whose feature failed the pre-release test (lines marked ⚑ below depend on that test).
+whose feature failed the pre-release test (lines marked below depend on that test).
 
 ## Change note (paste as-is)
 
@@ -12,11 +12,11 @@ whose feature failed the pre-release test (lines marked ⚑ below depend on that
 [b]Fixed[/b]
 [list]
 [*]Creative tab painting works again: since the game update, clicks on the map did nothing.
-[*]City Claim works again (same cause). ⚑
+[*]City Claim works again (same cause).
 [*]Deleting a unit works again (the game had started rejecting the old delete command).
 [*]Each paint click now reports its real result. Before, many paints flashed red even though they had worked.
-[*]The Cities tab shows all your settlements, not just the first four. ⚑
-[*]Restore Movement now also un-greys the unit's flag on the map. ⚑
+[*]The Cities tab shows all your settlements, not just the first four.
+[*]Restore Movement now also un-greys the unit's flag on the map.
 [*]The minimap draws rivers correctly (navigable vs minor, and no false rivers on other tiles).
 [*]Safer alongside other mods: the panel's database rows can no longer roll back other mods' setup content.
 [/list]
